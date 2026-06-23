@@ -3,222 +3,454 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Keyhome</title>
+  <title>keyhome</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Inconsolata:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #0d1117;
-      --surface: #161b22;
-      --border: #30363d;
-      --text: #c9d1d9;
-      --text-dim: #8b949e;
-      --accent: #58a6ff;
-      --green: #3fb950;
-      --red: #f85149;
-      --yellow: #d29922;
-      --mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
+      --background: #1a1a1a;
+      --foreground: #c4c4c4;
+      --muted: #2a2a2a;
+      --muted-fg: #808080;
+      --accent: #2a2a2a;
+      --border: rgba(255,255,255,0.1);
+      --border-strong: rgba(255,255,255,0.15);
+      --destructive: #ff6568;
+      --green: #4ade80;
+      --yellow: #fbbf24;
+      --mono: "Inconsolata", "SF Mono", ui-monospace, monospace;
+      --sans: "IBM Plex Sans", -apple-system, system-ui, sans-serif;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, system-ui, sans-serif;
-      font-size: 14px;
-      padding: 24px;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: var(--sans);
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
     }
-    h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; }
-    .subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 24px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 1100px; }
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px;
-    }
-    .card h2 {
-      font-size: 14px; font-weight: 600; color: var(--text-dim);
-      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;
-    }
-    .row {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 6px 0; border-bottom: 1px solid var(--border);
-    }
-    .row:last-child { border-bottom: none; }
-    .row .label { color: var(--text-dim); }
-    .row .value { font-family: var(--mono); font-size: 13px; }
-    .status-badge {
-      display: inline-block; padding: 2px 8px; border-radius: 12px;
-      font-size: 12px; font-weight: 500;
-    }
-    .status-ok { background: rgba(63,185,80,0.15); color: var(--green); }
-    .status-err { background: rgba(248,81,73,0.15); color: var(--red); }
-    .status-pending { background: rgba(210,153,34,0.15); color: var(--yellow); }
-    .btn {
-      background: var(--surface); border: 1px solid var(--border);
-      color: var(--text); padding: 8px 16px; border-radius: 6px;
-      font-size: 13px; cursor: pointer; transition: border-color 0.2s;
-    }
-    .btn:hover { border-color: var(--accent); }
-    .btn-primary {
-      background: rgba(88,166,255,0.1); border-color: rgba(88,166,255,0.3);
-      color: var(--accent);
-    }
-    .btn-bar { display: flex; gap: 8px; margin-top: 12px; }
-    .input {
-      width: 100%; background: var(--bg); border: 1px solid var(--border);
-      color: var(--text); padding: 8px 12px; border-radius: 6px;
-      font-family: var(--mono); font-size: 12px; margin-top: 8px;
-    }
-    .input:focus { outline: none; border-color: var(--accent); }
-    .error-msg { color: var(--red); font-size: 12px; margin-top: 8px; display: none; }
-    .error-msg.visible { display: block; }
-    .spinner {
-      display: inline-block; width: 14px; height: 14px;
-      border: 2px solid var(--border); border-top-color: var(--accent);
-      border-radius: 50%; animation: spin 0.8s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Frame viewer */
-    .viewer-card { grid-column: 1 / -1; }
-    .viewer-wrap {
-      margin-top: 12px; border: 1px solid var(--border); border-radius: 6px;
-      overflow: hidden; background: #000; position: relative;
-      min-height: 300px; display: flex; align-items: center; justify-content: center;
+    /* ─── Top bar (minimal, no navbar feel) ────────────────────────────── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .brand {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--foreground);
+    }
+    .sep { color: var(--muted-fg); }
+    .status-line {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted-fg);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .status-line .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--muted-fg);
+    }
+    .status-line .dot.ok { background: var(--green); }
+    .status-line .dot.err { background: var(--destructive); }
+    .status-line .dot.pending { background: var(--yellow); }
+    .status-line.ok { color: var(--green); }
+    .status-line.err { color: var(--destructive); }
+    .status-line.pending { color: var(--yellow); }
+    .topbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .node-id {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted-fg);
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .link-btn {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted-fg);
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-color: transparent;
+      background: none;
+      border: none;
+      padding: 0;
+      transition: color 0.1s, text-decoration-color 0.1s;
+    }
+    .link-btn:hover {
+      color: var(--foreground);
+      text-decoration-color: currentColor;
+    }
+
+    /* ─── Main (video) ────────────────────────────────────────────────── */
+    .main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      min-height: 0;
+      background: #0d0d0d;
     }
     #frame-canvas {
-      max-width: 100%; max-height: 500px; display: none;
-      cursor: crosshair;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: none;
     }
-    #frame-canvas.control-active { cursor: default; }
-    .viewer-placeholder {
-      color: var(--text-dim); font-size: 13px; padding: 60px 20px; text-align: center;
+    .placeholder {
+      text-align: center;
+      color: var(--muted-fg);
+      font-family: var(--mono);
+      font-size: 13px;
+      padding: 40px;
     }
-    .viewer-stats {
-      position: absolute; top: 8px; right: 8px;
-      background: rgba(0,0,0,0.7); color: var(--green);
-      font-family: var(--mono); font-size: 11px; padding: 4px 8px;
-      border-radius: 4px; display: none;
-    }
-    .viewer-stats.visible { display: block; }
-    .control-bar {
-      display: flex; align-items: center; gap: 12px; margin-top: 12px;
-    }
-    .control-toggle {
-      display: flex; align-items: center; gap: 8px; cursor: pointer;
-      padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
-      background: var(--surface); font-size: 13px;
-      transition: all 0.2s;
-    }
-    .control-toggle:hover { border-color: var(--accent); }
-    .control-toggle.active {
-      background: rgba(63,185,80,0.1); border-color: rgba(63,185,80,0.3);
+    .placeholder.hidden { display: none; }
+
+    /* Stats overlay */
+    .stats {
+      position: absolute;
+      top: 8px; right: 8px;
+      font-family: var(--mono);
+      font-size: 11px;
       color: var(--green);
+      background: rgba(0,0,0,0.5);
+      padding: 2px 8px;
+      display: none;
+      pointer-events: none;
     }
-    .control-toggle .dot {
-      width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim);
+    .stats.visible { display: block; }
+
+    /* Control overlay */
+    .control-bar {
+      position: absolute;
+      bottom: 8px; left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      gap: 4px;
+      background: rgba(0,0,0,0.5);
+      padding: 4px;
     }
-    .control-toggle.active .dot { background: var(--green); }
-    .control-hint {
-      color: var(--text-dim); font-size: 11px;
+    .control-bar.visible { display: flex; }
+    .control-toggle {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted-fg);
+      cursor: pointer;
+      padding: 4px 10px;
+      text-decoration: underline;
+      text-decoration-color: transparent;
+      transition: color 0.1s, text-decoration-color 0.1s;
     }
-    .titan-hint {
-      color: var(--text-dim); font-size: 11px; margin-top: 8px;
+    .control-toggle:hover {
+      color: var(--foreground);
+      text-decoration-color: currentColor;
+    }
+    .control-toggle.active {
+      color: var(--green);
+      text-decoration-color: currentColor;
+    }
+
+    /* ─── Bottom bar (status bar — vim/gitdot style) ───────────────────── */
+    .bottombar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--background);
+      flex-shrink: 0;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .bottombar .prompt { color: var(--foreground); }
+    .bottombar .sep { color: var(--muted-fg); }
+    .bottombar .action {
+      color: var(--muted-fg);
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-color: transparent;
+      transition: color 0.1s, text-decoration-color 0.1s;
+    }
+    .bottombar .action:hover {
+      color: var(--foreground);
+      text-decoration-color: currentColor;
+    }
+    .bottombar .action.primary { color: var(--foreground); }
+    .bottombar .spacer { flex: 1; }
+    .pin-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pin-input {
+      width: 80px;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border-strong);
+      color: var(--foreground);
+      padding: 2px 4px;
+      font-family: var(--mono);
+      font-size: 12px;
+      text-align: center;
+    }
+    .pin-input:focus {
+      outline: none;
+      border-bottom-color: var(--foreground);
+    }
+    .pin-label {
+      font-size: 11px;
+      color: var(--muted-fg);
+    }
+
+    /* ─── Setup screen ────────────────────────────────────────────────── */
+    .setup {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--background);
+    }
+    .setup.hidden { display: none; }
+    .setup-content {
+      text-align: center;
+      max-width: 360px;
+      padding: 40px;
+    }
+    .setup-content h1 {
+      font-family: var(--mono);
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--foreground);
+      margin-bottom: 12px;
+    }
+    .setup-content p {
+      font-size: 13px;
+      color: var(--muted-fg);
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+    .setup-form {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      align-items: center;
+    }
+    .setup-input {
+      width: 120px;
+      text-align: center;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border-strong);
+      color: var(--foreground);
+      padding: 6px 8px;
+      font-family: var(--mono);
+      font-size: 14px;
+    }
+    .setup-input:focus {
+      outline: none;
+      border-bottom-color: var(--foreground);
+    }
+    .setup-btn {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--muted-fg);
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 6px 12px;
+      text-decoration: underline;
+      text-decoration-color: transparent;
+      transition: color 0.1s, text-decoration-color 0.1s;
+    }
+    .setup-btn:hover {
+      color: var(--foreground);
+      text-decoration-color: currentColor;
+    }
+    .setup-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .setup-status {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted-fg);
+      margin-top: 16px;
+      min-height: 16px;
+    }
+    .setup-status.pending { color: var(--yellow); }
+    .setup-status.err { color: var(--destructive); }
+    .setup-status.ok { color: var(--green); }
+
+    /* ─── Side panel ──────────────────────────────────────────────────── */
+    .panel-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 90;
+      display: none;
+    }
+    .panel-overlay.visible { display: block; }
+    .panel {
+      position: fixed;
+      top: 0; right: 0; bottom: 0;
+      width: 300px;
+      background: var(--background);
+      border-left: 1px solid var(--border);
+      transform: translateX(100%);
+      transition: transform 0.15s;
+      z-index: 91;
+      display: flex;
+      flex-direction: column;
+    }
+    .panel.visible { transform: translateX(0); }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .panel-header h2 {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+    }
+    .panel-section {
+      margin-bottom: 24px;
+    }
+    .panel-section h3 {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted-fg);
+      margin-bottom: 8px;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-label {
+      font-size: 12px;
+      color: var(--muted-fg);
+    }
+    .info-value {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--foreground);
     }
   </style>
 </head>
 <body>
-  <h1>Keyhome</h1>
-  <p class="subtitle">FIDO2-secured remote desktop via Iroh — no address sharing, just tap your key</p>
+  <!-- Setup screen -->
+  <div class="setup hidden" id="setup">
+    <div class="setup-content">
+      <h1>register key</h1>
+      <p>Plug in your Titan key. This one-time step derives your machine's identity and stores it in the OS keyring. After this, hosting starts without the key.</p>
+      <div class="setup-form">
+        <input class="setup-input" id="setup-pin" type="password" placeholder="PIN" autocomplete="off" />
+        <button class="setup-btn" id="setup-btn" onclick="setupRegister()">register</button>
+      </div>
+      <div class="setup-status" id="setup-status"></div>
+    </div>
+  </div>
 
-  <div class="grid">
-    <!-- FIDO2 Device Card -->
-    <div class="card">
-      <h2>Security Key</h2>
-      <div class="row">
-        <span class="label">Status</span>
-        <span id="fido-status" class="status-badge status-pending">Not scanned</span>
-      </div>
-      <div class="row">
-        <span class="label">Device</span>
-        <span id="fido-product" class="value">—</span>
-      </div>
-      <div class="row">
-        <span class="label">VID:PID</span>
-        <span id="fido-vidpid" class="value">—</span>
-      </div>
-      <div class="row">
-        <span class="label">CTAP versions</span>
-        <span id="fido-versions" class="value">—</span>
-      </div>
-      <div class="row">
-        <span class="label">Extensions</span>
-        <span id="fido-extensions" class="value">—</span>
-      </div>
-      <div class="row">
-        <span class="label">PIN retries</span>
-        <span id="fido-pin" class="value">—</span>
-      </div>
-      <div class="btn-bar">
-        <button class="btn btn-primary" onclick="scanFido()">Scan for key</button>
+  <!-- Top bar -->
+  <div class="topbar">
+    <span class="brand">keyhome</span>
+    <span class="sep">·</span>
+    <div class="status-line" id="status-line">
+      <span class="dot" id="status-dot"></span>
+      <span id="status-text">idle</span>
+    </div>
+    <div class="topbar-right">
+      <span class="node-id" id="node-id-text"></span>
+      <button class="link-btn" onclick="togglePanel()">info</button>
+    </div>
+  </div>
+
+  <!-- Main / Video -->
+  <div class="main">
+    <canvas id="frame-canvas"></canvas>
+    <div class="placeholder" id="placeholder">
+      no stream
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="control-bar" id="control-bar">
+      <div class="control-toggle" id="control-toggle" onclick="toggleControl()">
+        take control
       </div>
     </div>
+  </div>
 
-    <!-- Host Card -->
-    <div class="card">
-      <h2>Host (Server)</h2>
-      <div class="row">
-        <span class="label">Registration</span>
-        <span id="reg-status" class="status-badge status-pending">Not registered</span>
-      </div>
-      <div class="row">
-        <span class="label">Status</span>
-        <span id="host-status" class="status-badge status-pending">Not started</span>
-      </div>
-      <div class="row">
-        <span class="label">Node ID</span>
-        <span id="host-id" class="value">—</span>
-      </div>
-      <div class="btn-bar">
-        <button class="btn btn-primary" onclick="registerKey()">Register Key</button>
-        <button class="btn" onclick="startHost()">Start Hosting</button>
-        <button class="btn" onclick="unregister()" style="margin-left:auto; font-size:11px; opacity:0.6;">Unregister</button>
-      </div>
-      <div class="titan-hint">
-        Register: one-time Titan tap, stores identity in OS keyring.
-        Start Hosting: no key needed.
-      </div>
+  <!-- Bottom bar (status bar) -->
+  <div class="bottombar">
+    <span class="prompt" id="bottom-action">keyhome</span>
+    <span class="sep">»</span>
+    <span class="action primary" id="action-host" onclick="startHost()">host</span>
+    <span class="sep">·</span>
+    <span class="action" id="action-unreg" onclick="unregister()" style="color: var(--destructive); opacity: 0.6;">unregister</span>
+    <div class="spacer"></div>
+    <div class="pin-group">
+      <span class="pin-label">pin</span>
+      <input class="pin-input" id="pin-input" type="password" placeholder="····" autocomplete="off" />
     </div>
+    <span class="sep">·</span>
+    <span class="action primary" onclick="connectHost()">connect</span>
+  </div>
 
-    <!-- Client Card -->
-    <div class="card" style="grid-column: 1 / -1;">
-      <h2>Connect to Host (Client)</h2>
-      <p style="color: var(--text-dim); font-size: 12px; margin-bottom: 8px;">
-        Enter your Titan PIN and tap the key. The host's identity is derived from
-        the same key — no address needed.
-      </p>
-      <div class="btn-bar" style="margin-top: 0;">
-        <input class="input" id="pin-input" type="password" placeholder="Titan PIN" style="flex: 1; margin-top: 0;" />
-        <button class="btn btn-primary" onclick="connectHost()">Connect via Titan</button>
-      </div>
-      <div id="connect-error" class="error-msg"></div>
+  <!-- Side panel -->
+  <div class="panel-overlay" id="panel-overlay" onclick="togglePanel()"></div>
+  <div class="panel" id="panel">
+    <div class="panel-header">
+      <h2>device</h2>
+      <button class="link-btn" onclick="togglePanel()">close</button>
     </div>
-
-    <!-- Frame Viewer + Input Control -->
-    <div class="card viewer-card">
-      <h2>Remote Screen <span id="viewer-stats" class="viewer-stats"></span></h2>
-      <div class="viewer-wrap">
-        <canvas id="frame-canvas"></canvas>
-        <div id="viewer-placeholder" class="viewer-placeholder">
-          No stream connected. Start hosting on one machine, then connect from another
-          with the same Titan key.
-        </div>
+    <div class="panel-body">
+      <div class="panel-section">
+        <h3># security key</h3>
+        <div class="info-row"><span class="info-label">status</span><span class="info-value" id="fido-status">—</span></div>
+        <div class="info-row"><span class="info-label">product</span><span class="info-value" id="fido-product">—</span></div>
+        <div class="info-row"><span class="info-label">vid:pid</span><span class="info-value" id="fido-vidpid">—</span></div>
+        <div class="info-row"><span class="info-label">ctap</span><span class="info-value" id="fido-versions">—</span></div>
+        <div class="info-row"><span class="info-label">extensions</span><span class="info-value" id="fido-extensions">—</span></div>
+        <div class="info-row"><span class="info-label">pin retries</span><span class="info-value" id="fido-pin">—</span></div>
+        <button class="link-btn" style="margin-top: 8px;" onclick="scanFido()">scan</button>
       </div>
-      <div class="control-bar">
-        <div class="control-toggle" id="control-toggle" onclick="toggleControl()">
-          <span class="dot"></span>
-          <span id="control-label">Take Control</span>
-        </div>
-        <span class="control-hint" id="control-hint">Connect to a host first</span>
+      <div class="panel-section">
+        <h3># registration</h3>
+        <div class="info-row"><span class="info-label">status</span><span class="info-value" id="reg-status">—</span></div>
+        <div class="info-row"><span class="info-label">node id</span><span class="info-value" id="reg-node-id">—</span></div>
       </div>
     </div>
   </div>
@@ -226,168 +458,188 @@
   <script>
     let controlMode = false;
     let connected = false;
+    let hosting = false;
+    let registered = false;
+    let frameWidth = 0;
+    let frameHeight = 0;
 
     const invoke = (...args) => window.__TAURI__.core.invoke(...args);
     const listen = (...args) => window.__TAURI__.event.listen(...args);
 
-    // ─── FIDO2 ─────────────────────────────────────────────────────────
-    async function scanFido() {
-      const status = document.getElementById('fido-status');
-      status.className = 'status-badge status-pending';
-      status.innerHTML = '<span class="spinner"></span> Scanning...';
-      try {
-        const info = await invoke('fido_device_info');
-        if (info.found && !info.error) {
-          status.className = 'status-badge status-ok';
-          status.textContent = 'Connected';
-          document.getElementById('fido-product').textContent = info.product;
-          document.getElementById('fido-vidpid').textContent =
-            `0x${info.vid.toString(16)}:0x${info.pid.toString(16)}`;
-          document.getElementById('fido-versions').textContent = info.versions.join(', ');
-          document.getElementById('fido-extensions').textContent = info.extensions.join(', ');
-          document.getElementById('fido-pin').textContent = info.pin_retries;
-        } else if (info.found) {
-          status.className = 'status-badge status-err';
-          status.textContent = 'Error';
-          document.getElementById('fido-product').textContent = info.error;
-        } else {
-          status.className = 'status-badge status-err';
-          status.textContent = 'No device';
-        }
-      } catch (e) {
-        status.className = 'status-badge status-err';
-        status.textContent = 'Error';
-        console.error(e);
-      }
+    // ─── Status ──────────────────────────────────────────────────────────
+    function setStatus(state, text) {
+      const line = document.getElementById('status-line');
+      const dot = document.getElementById('status-dot');
+      const txt = document.getElementById('status-text');
+      line.className = 'status-line ' + state;
+      dot.className = 'dot ' + state;
+      txt.textContent = text;
     }
 
-    // ─── Host Registration ─────────────────────────────────────────────
+    // ─── Registration ───────────────────────────────────────────────────
     async function checkRegistration() {
       try {
         const reg = await invoke('host_registration_status');
-        const badge = document.getElementById('reg-status');
+        registered = reg.registered;
         if (reg.registered) {
-          badge.className = 'status-badge status-ok';
-          badge.textContent = 'Registered';
-          document.getElementById('host-id').textContent =
+          document.getElementById('setup').classList.add('hidden');
+          document.getElementById('node-id-text').textContent =
             reg.node_id.substring(0, 16) + '...';
-        } else if (reg.error) {
-          badge.className = 'status-badge status-err';
-          badge.textContent = 'Error';
+          document.getElementById('reg-status').textContent = 'registered';
+          document.getElementById('reg-node-id').textContent =
+            reg.node_id.substring(0, 24) + '...';
         } else {
-          badge.className = 'status-badge status-pending';
-          badge.textContent = 'Not registered';
+          document.getElementById('setup').classList.remove('hidden');
+          document.getElementById('reg-status').textContent = 'not registered';
         }
       } catch (e) {
         console.error('registration check failed:', e);
       }
     }
 
-    async function registerKey() {
-      const pin = document.getElementById('pin-input').value.trim();
+    // ─── Setup ──────────────────────────────────────────────────────────
+    async function setupRegister() {
+      const pin = document.getElementById('setup-pin').value.trim();
+      const btn = document.getElementById('setup-btn');
+      const status = document.getElementById('setup-status');
       if (!pin) {
-        alert('Enter Titan PIN first');
+        status.className = 'setup-status err';
+        status.textContent = 'enter PIN';
         return;
       }
-
-      const badge = document.getElementById('reg-status');
-      badge.className = 'status-badge status-pending';
-      badge.innerHTML = '<span class="spinner"></span> Tap Titan...';
+      btn.disabled = true;
+      status.className = 'setup-status pending';
+      status.textContent = 'tap titan...';
       try {
         const result = await invoke('titan_register_host', { pin });
         if (result.registered) {
-          badge.className = 'status-badge status-ok';
-          badge.textContent = 'Registered';
-          document.getElementById('host-id').textContent =
-            result.node_id.substring(0, 16) + '...';
+          status.className = 'setup-status ok';
+          status.textContent = 'registered';
+          setTimeout(() => {
+            document.getElementById('setup').classList.add('hidden');
+            document.getElementById('node-id-text').textContent =
+              result.node_id.substring(0, 16) + '...';
+            registered = true;
+            checkRegistration();
+          }, 600);
         } else {
-          badge.className = 'status-badge status-err';
-          badge.textContent = 'Failed';
+          status.className = 'setup-status err';
+          status.textContent = 'failed';
+          btn.disabled = false;
         }
       } catch (e) {
-        badge.className = 'status-badge status-err';
-        badge.textContent = 'Error: ' + e;
+        status.className = 'setup-status err';
+        status.textContent = 'error: ' + e;
+        btn.disabled = false;
       }
     }
 
-    async function unregister() {
-      if (!confirm('Remove registered identity from keyring?')) return;
-      try {
-        await invoke('host_unregister');
-        const badge = document.getElementById('reg-status');
-        badge.className = 'status-badge status-pending';
-        badge.textContent = 'Not registered';
-        document.getElementById('host-id').textContent = '—';
-      } catch (e) {
-        alert('Unregister failed: ' + e);
-      }
-    }
-
-    // ─── Host ──────────────────────────────────────────────────────────
+    // ─── Host ───────────────────────────────────────────────────────────
     async function startHost() {
-      const status = document.getElementById('host-status');
-      status.className = 'status-badge status-pending';
-      status.innerHTML = '<span class="spinner"></span> Starting...';
+      const action = document.getElementById('action-host');
+      if (hosting) {
+        // TODO: wire iroh_host_stop
+        hosting = false;
+        setStatus('', 'idle');
+        action.textContent = 'host';
+        return;
+      }
+      action.style.opacity = '0.4';
+      setStatus('pending', 'starting...');
       try {
         const result = await invoke('iroh_host_start');
         if (result.running) {
-          status.className = 'status-badge status-ok';
-          status.textContent = 'Hosting';
-          document.getElementById('host-id').textContent =
+          hosting = true;
+          setStatus('ok', 'hosting');
+          document.getElementById('node-id-text').textContent =
             result.node_id.substring(0, 16) + '...';
+          action.textContent = 'stop';
+          action.style.opacity = '1';
         } else {
-          status.className = 'status-badge status-err';
-          status.textContent = 'Failed';
+          setStatus('err', 'failed');
+          action.style.opacity = '1';
         }
       } catch (e) {
-        status.className = 'status-badge status-err';
-        status.textContent = 'Error: ' + e;
+        setStatus('err', 'error');
+        action.style.opacity = '1';
       }
     }
 
-    // ─── Client ────────────────────────────────────────────────────────
+    // ─── Client ─────────────────────────────────────────────────────────
     async function connectHost() {
       const pin = document.getElementById('pin-input').value.trim();
-      const errBox = document.getElementById('connect-error');
-      errBox.classList.remove('visible');
-
       if (!pin) {
-        errBox.textContent = 'Enter Titan PIN';
-        errBox.classList.add('visible');
+        setStatus('err', 'enter pin');
         return;
       }
-
-      errBox.style.color = 'var(--yellow)';
-      errBox.textContent = 'Tap Titan when it blinks...';
-      errBox.classList.add('visible');
-
+      setStatus('pending', 'tap titan...');
       try {
         const result = await invoke('iroh_client_connect', { pin });
         if (result.connected) {
           connected = true;
-          errBox.style.color = 'var(--green)';
-          errBox.textContent = 'Connected to host ' + result.host_node_id.substring(0, 16) + '...';
-          errBox.classList.add('visible');
+          setStatus('ok', 'connected');
+          document.getElementById('node-id-text').textContent =
+            result.host_node_id.substring(0, 16) + '...';
           document.getElementById('frame-canvas').style.display = 'block';
-          document.getElementById('viewer-placeholder').style.display = 'none';
-          document.getElementById('control-hint').textContent = 'Click "Take Control" to send input';
+          document.getElementById('placeholder').classList.add('hidden');
+          document.getElementById('control-bar').classList.add('visible');
         } else {
-          errBox.style.color = 'var(--red)';
-          errBox.textContent = result.error || 'Connection failed';
-          errBox.classList.add('visible');
+          setStatus('err', 'failed');
         }
       } catch (e) {
-        errBox.style.color = 'var(--red)';
-        errBox.textContent = 'Error: ' + e;
-        errBox.classList.add('visible');
+        setStatus('err', 'error');
       }
     }
 
-    // ─── Frame rendering ───────────────────────────────────────────────
+    // ─── Unregister ─────────────────────────────────────────────────────
+    async function unregister() {
+      if (!confirm('Remove identity from keyring?')) return;
+      try {
+        await invoke('host_unregister');
+        registered = false;
+        setStatus('', 'idle');
+        document.getElementById('node-id-text').textContent = '';
+        document.getElementById('reg-status').textContent = 'not registered';
+        document.getElementById('reg-node-id').textContent = '—';
+        document.getElementById('setup').classList.remove('hidden');
+      } catch (e) {
+        alert('unregister failed: ' + e);
+      }
+    }
+
+    // ─── FIDO scan ──────────────────────────────────────────────────────
+    async function scanFido() {
+      try {
+        const info = await invoke('fido_device_info');
+        if (info.found && !info.error) {
+          document.getElementById('fido-status').textContent = 'connected';
+          document.getElementById('fido-status').style.color = 'var(--green)';
+          document.getElementById('fido-product').textContent = info.product;
+          document.getElementById('fido-vidpid').textContent =
+            `0x${info.vid.toString(16)}:0x${info.pid.toString(16)}`;
+          document.getElementById('fido-versions').textContent = info.versions.join(', ');
+          document.getElementById('fido-extensions').textContent = info.extensions.join(', ');
+          document.getElementById('fido-pin').textContent = info.pin_retries;
+        } else {
+          document.getElementById('fido-status').textContent = info.error || 'no device';
+          document.getElementById('fido-status').style.color = 'var(--destructive)';
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // ─── Panel ──────────────────────────────────────────────────────────
+    function togglePanel() {
+      const panel = document.getElementById('panel');
+      const overlay = document.getElementById('panel-overlay');
+      panel.classList.toggle('visible');
+      overlay.classList.toggle('visible');
+    }
+
+    // ─── Frames ─────────────────────────────────────────────────────────
     const canvas = document.getElementById('frame-canvas');
     const ctx = canvas.getContext('2d');
-    let frameWidth = 0;
-    let frameHeight = 0;
 
     listen('frame', (event) => {
       const { width, height, data } = event.payload;
@@ -395,7 +647,6 @@
       frameHeight = height;
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
-
       const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0));
       const blob = new Blob([bytes], { type: 'image/jpeg' });
       const url = URL.createObjectURL(blob);
@@ -408,26 +659,24 @@
     });
 
     listen('frame-stats', (event) => {
-      const stats = document.getElementById('viewer-stats');
-      stats.textContent = `${event.payload.fps.toFixed(1)} fps | frame ${event.payload.count}`;
+      const stats = document.getElementById('stats');
+      stats.textContent = `${event.payload.fps.toFixed(1)} fps · ${event.payload.count}`;
       stats.classList.add('visible');
     });
 
     listen('frame-error', (event) => {
-      const errBox = document.getElementById('connect-error');
-      errBox.style.color = 'var(--red)';
-      errBox.textContent = event.payload;
-      errBox.classList.add('visible');
+      setStatus('err', 'disconnected');
       document.getElementById('frame-canvas').style.display = 'none';
-      document.getElementById('viewer-placeholder').style.display = 'block';
-      document.getElementById('viewer-placeholder').textContent = 'Disconnected: ' + event.payload;
+      document.getElementById('placeholder').classList.remove('hidden');
+      document.getElementById('placeholder').textContent = event.payload;
+      document.getElementById('stats').classList.remove('visible');
+      document.getElementById('control-bar').classList.remove('visible');
       connected = false;
       controlMode = false;
       updateControlUI();
     });
 
-    // ─── Input Control ─────────────────────────────────────────────────
-
+    // ─── Input ──────────────────────────────────────────────────────────
     function toggleControl() {
       if (!connected) return;
       controlMode = !controlMode;
@@ -435,26 +684,9 @@
     }
 
     function updateControlUI() {
-      const toggle = document.getElementById('control-toggle');
-      const label = document.getElementById('control-label');
-      const hint = document.getElementById('control-hint');
-      const canvas = document.getElementById('frame-canvas');
-
-      if (controlMode) {
-        toggle.classList.add('active');
-        label.textContent = 'Controlling';
-        hint.textContent = 'Mouse and keyboard sent to host. Click to toggle off.';
-        canvas.classList.add('control-active');
-      } else {
-        toggle.classList.remove('active');
-        label.textContent = 'Take Control';
-        if (connected) {
-          hint.textContent = 'Click "Take Control" to send input';
-        } else {
-          hint.textContent = 'Connect to a host first';
-        }
-        canvas.classList.remove('control-active');
-      }
+      const el = document.getElementById('control-toggle');
+      el.textContent = controlMode ? 'controlling' : 'take control';
+      el.classList.toggle('active', controlMode);
     }
 
     function scaleCoords(clientX, clientY) {
@@ -540,7 +772,7 @@
       }
     });
 
-    // ─── Init ──────────────────────────────────────────────────────────
+    // ─── Init ───────────────────────────────────────────────────────────
     checkRegistration();
   </script>
 </body>
