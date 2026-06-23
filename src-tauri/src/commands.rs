@@ -183,13 +183,13 @@ pub async fn iroh_host_start(state: State<'_, AppState>) -> Result<HostStatus, S
         serde_json::to_string(&addr).map_err(|e| format!("Failed to serialize addr: {}", e))?;
 
     let handler = Arc::new(FrameStreamHandler);
-    let _router = Router::builder(endpoint.clone())
+    let router = Router::builder(endpoint.clone())
         .accept(ALPN, handler)
         .spawn();
 
-    // Keep endpoint alive by leaking — MVP tradeoff
+    // Keep endpoint and router alive by leaking — MVP tradeoff
     std::mem::forget(endpoint);
-    std::mem::forget(_router);
+    std::mem::forget(router);
 
     let mut host = state.host.lock().map_err(|e| format!("Lock error: {}", e))?;
     *host = Some(HostState {

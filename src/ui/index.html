@@ -195,10 +195,11 @@
   </div>
 
   <script>
-    const { invoke } = window.__TAURI__.core;
-    const { listen } = window.__TAURI__.event;
-
     let hostAddrJson = '';
+
+    // Access Tauri API lazily — avoids TDZ errors if __TAURI__ isn't ready yet
+    const invoke = (...args) => window.__TAURI__.core.invoke(...args);
+    const listen = (...args) => window.__TAURI__.event.listen(...args);
 
     // ─── FIDO2 ─────────────────────────────────────────────────────────
     async function scanFido() {
