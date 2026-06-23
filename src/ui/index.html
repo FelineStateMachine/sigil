@@ -382,6 +382,9 @@
         <button class="setup-btn" id="setup-btn" onclick="setupRegister()">register</button>
       </div>
       <div class="setup-status" id="setup-status"></div>
+      <div style="margin-top: 20px;">
+        <button class="setup-btn" onclick="skipSetup()">or connect</button>
+      </div>
     </div>
   </div>
 
@@ -498,6 +501,10 @@
     }
 
     // ─── Setup ──────────────────────────────────────────────────────────
+    function skipSetup() {
+      document.getElementById('setup').classList.add('hidden');
+    }
+
     async function setupRegister() {
       const pin = document.getElementById('setup-pin').value.trim();
       const btn = document.getElementById('setup-btn');
