@@ -15,6 +15,7 @@ fn main() {
             commands::iroh_host_start,
             commands::iroh_host_status,
             commands::iroh_client_connect,
+            commands::iroh_client_send_input,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
