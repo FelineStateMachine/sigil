@@ -25,6 +25,8 @@ use iroh::protocol::{ProtocolHandler, Router};
 use iroh::{Endpoint, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use openh264::encoder::Encoder;
+use openh264::formats::{RgbSliceU8, YUVBuffer, YUVSource};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -613,34 +615,45 @@ async fn stream_frames(conn: Connection) -> anyhow::Result<()> {
         .next()
         .ok_or_else(|| anyhow::anyhow!("no monitors found"))?;
 
+    let mut encoder = Encoder::new().context("failed to create H.264 encoder")?;
+
     let mut frame_count = 0u32;
     let start = Instant::now();
 
     loop {
         let image = monitor.capture_image()?;
         let rgb_image = image::DynamicImage::ImageRgba8(image).to_rgb8();
-        let (w, h) = (rgb_image.width(), rgb_image.height());
+        let (w, h) = (rgb_image.width() as usize, rgb_image.height() as usize);
 
-        let mut jpeg_buf = Vec::with_capacity(50_000);
-        rgb_image.write_to(&mut Cursor::new(&mut jpeg_buf), image::ImageFormat::Jpeg)?;
-        let jpeg_size = jpeg_buf.len();
+        // RGB8 → YUV → H.264
+        let rgb_source = RgbSliceU8::new(rgb_image.as_raw(), (w, h));
+        let yuv = YUVBuffer::from_rgb8_source(rgb_source);
+        let (h264_data, is_keyframe) = {
+            let bitstream = encoder.encode(&yuv).context("H.264 encode failed")?;
+            let kf = matches!(bitstream.frame_type(), openh264::encoder::FrameType::I | openh264::encoder::FrameType::IDR);
+            (bitstream.to_vec(), kf)
+        };
+        let h264_size = h264_data.len();
 
+        // Header: width(4) + height(4) + size(4) + is_keyframe(1)
+        let kf_byte = [0u8, 0u8, 0u8, if is_keyframe { 1u8 } else { 0u8 }];
         let header = [
             (w as u32).to_be_bytes(),
             (h as u32).to_be_bytes(),
-            (jpeg_size as u32).to_be_bytes(),
+            (h264_size as u32).to_be_bytes(),
+            kf_byte,
         ]
         .concat();
 
         send.write_all(&header).await?;
-        send.write_all(&jpeg_buf).await?;
+        send.write_all(&h264_data).await?;
 
         frame_count += 1;
         let elapsed = start.elapsed();
         let fps = frame_count as f64 / elapsed.as_secs_f64().max(0.001);
         eprintln!(
-            "[host] frame={} {}x{} jpeg={}B fps={:.1}",
-            frame_count, w, h, jpeg_size, fps
+            "[host] frame={} {}x{} h264={}B kf={} fps={:.1}",
+            frame_count, w, h, h264_size, is_keyframe, fps
         );
 
         match tokio::time::timeout(Duration::from_millis(1), recv.read(&mut [0u8; 1])).await {
@@ -846,46 +859,82 @@ pub async fn iroh_client_connect(
         let _ = input_stream.finish();
     });
 
-    // Spawn frame reader
+    // Spawn frame reader (H.264 decode → JPEG for canvas)
     tokio::spawn(async move {
+        let mut decoder = match openh264::decoder::Decoder::new() {
+            Ok(d) => d,
+            Err(e) => {
+                let _ = app.emit("frame-error", format!("Decoder init failed: {}", e));
+                return;
+            }
+        };
+
         let mut frame_count = 0u32;
         let start = Instant::now();
 
         loop {
-            let mut header = [0u8; 12];
+            // Header: width(4) + height(4) + size(4) + is_keyframe(1) = 13 bytes
+            let mut header = [0u8; 13];
             if frame_recv.read_exact(&mut header).await.is_err() {
                 let _ = app.emit("frame-error", "Connection lost");
                 break;
             }
 
-            let w = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-            let h = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
-            let jpeg_len =
+            let _w = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+            let _h = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+            let h264_len =
                 u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize;
+            let _is_keyframe = header[12] == 1;
 
-            let mut jpeg_buf = vec![0u8; jpeg_len];
-            if frame_recv.read_exact(&mut jpeg_buf).await.is_err() {
+            let mut h264_buf = vec![0u8; h264_len];
+            if frame_recv.read_exact(&mut h264_buf).await.is_err() {
                 let _ = app.emit("frame-error", "Connection lost");
                 break;
             }
 
-            frame_count += 1;
-            let elapsed = start.elapsed();
-            let fps = frame_count as f64 / elapsed.as_secs_f64().max(0.001);
+            // Decode H.264 → YUV → RGB8 → JPEG
+            match decoder.decode(&h264_buf) {
+                Ok(Some(yuv)) => {
+                    let (yw, yh) = yuv.dimensions();
+                    let rgb_len = yuv.rgb8_len();
+                    let mut rgb_raw = vec![0u8; rgb_len];
+                    yuv.write_rgb8(&mut rgb_raw);
 
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg_buf);
-            let _ = app.emit(
-                "frame",
-                FramePayload {
-                    width: w,
-                    height: h,
-                    data: b64,
-                },
-            );
-            let _ = app.emit(
-                "frame-stats",
-                serde_json::json!({ "fps": fps, "count": frame_count }),
-            );
+                    // Re-encode as JPEG for canvas
+                    let img = image::RgbImage::from_raw(yw as u32, yh as u32, rgb_raw);
+                    if let Some(img) = img {
+                        let mut jpeg_buf = Vec::with_capacity(30_000);
+                        if image::DynamicImage::ImageRgb8(img)
+                            .write_to(&mut Cursor::new(&mut jpeg_buf), image::ImageFormat::Jpeg)
+                            .is_ok()
+                        {
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg_buf);
+                            let _ = app.emit(
+                                "frame",
+                                FramePayload {
+                                    width: yw as u32,
+                                    height: yh as u32,
+                                    data: b64,
+                                },
+                            );
+                        }
+                    }
+
+                    frame_count += 1;
+                    let elapsed = start.elapsed();
+                    let fps = frame_count as f64 / elapsed.as_secs_f64().max(0.001);
+                    let _ = app.emit(
+                        "frame-stats",
+                        serde_json::json!({ "fps": fps, "count": frame_count }),
+                    );
+                }
+                Ok(None) => {
+                    // Need more data — normal for first few NALs
+                }
+                Err(e) => {
+                    eprintln!("[client] decode error: {}", e);
+                }
+            }
         }
 
         drop(endpoint);

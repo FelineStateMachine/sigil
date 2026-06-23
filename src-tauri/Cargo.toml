@@ -31,3 +31,4 @@ base64 = "0.22"
 enigo = { version = "0.2", features = ["serde"] }
 sha2 = "0.10"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+openh264 = "0.7"
