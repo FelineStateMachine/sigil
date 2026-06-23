@@ -36,6 +36,45 @@ const INPUT_ALPN: &[u8] = b"keyhome/input-stream/0";
 const RPID: &str = "keyhome";
 const SALT_MESSAGE: &str = "keyhome-iroh-identity-v1";
 const N0_RELAY: &str = "https://usw1-1.relay.n0.iroh.link./";
+const KEYRING_SERVICE: &str = "keyhome";
+const KEYRING_ENTRY: &str = "host-identity";
+
+// ─── Keyring Persistence ─────────────────────────────────────────────────────
+
+fn store_identity_in_keyring(secret: &[u8; 32]) -> anyhow::Result<()> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY)
+        .context("Failed to create keyring entry")?;
+    entry
+        .set_secret(secret)
+        .context("Failed to store identity in keyring")
+}
+
+fn load_identity_from_keyring() -> anyhow::Result<Option<[u8; 32]>> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY)
+        .context("Failed to create keyring entry")?;
+    match entry.get_secret() {
+        Ok(bytes) => {
+            if bytes.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&bytes);
+                Ok(Some(arr))
+            } else {
+                anyhow::bail!("Keyring entry has wrong length: {}", bytes.len())
+            }
+        }
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => anyhow::bail!("Failed to read keyring: {:?}", e),
+    }
+}
+
+fn clear_identity_from_keyring() -> anyhow::Result<()> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY)
+        .context("Failed to create keyring entry")?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => anyhow::bail!("Failed to clear keyring: {:?}", e),
+    }
+}
 
 // ─── Titan HMAC-Secret Derivation ────────────────────────────────────────────
 
@@ -414,6 +453,63 @@ pub fn titan_derive_identity(pin: String) -> TitanIdentity {
     }
 }
 
+// ─── Host Registration (keyring) ─────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct RegistrationStatus {
+    pub registered: bool,
+    pub node_id: Option<String>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub fn host_registration_status() -> RegistrationStatus {
+    match load_identity_from_keyring() {
+        Ok(Some(bytes)) => {
+            let secret = SecretKey::from_bytes(&bytes);
+            RegistrationStatus {
+                registered: true,
+                node_id: Some(secret.public().to_string()),
+                error: None,
+            }
+        }
+        Ok(None) => RegistrationStatus {
+            registered: false,
+            node_id: None,
+            error: None,
+        },
+        Err(e) => RegistrationStatus {
+            registered: false,
+            node_id: None,
+            error: Some(format!("{:?}", e)),
+        },
+    }
+}
+
+#[tauri::command]
+pub async fn titan_register_host(pin: String) -> Result<RegistrationStatus, String> {
+    let secret = tokio::task::spawn_blocking(move || derive_secret_from_titan(&pin))
+        .await
+        .map_err(|e| format!("Titan derivation task failed: {}", e))?
+        .map_err(|e| format!("Titan derivation failed: {:?}", e))?;
+
+    let node_id = SecretKey::from_bytes(&secret).public().to_string();
+
+    store_identity_in_keyring(&secret).map_err(|e| format!("Keyring store failed: {:?}", e))?;
+
+    Ok(RegistrationStatus {
+        registered: true,
+        node_id: Some(node_id),
+        error: None,
+    })
+}
+
+#[tauri::command]
+pub fn host_unregister() -> Result<bool, String> {
+    clear_identity_from_keyring().map_err(|e| format!("Keyring clear failed: {:?}", e))?;
+    Ok(true)
+}
+
 // ─── Iroh Host ───────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -424,13 +520,13 @@ pub struct HostStatus {
 }
 
 #[tauri::command]
-pub async fn iroh_host_start(state: State<'_, AppState>, pin: String) -> Result<HostStatus, String> {
-    // Derive identity from Titan (blocking — runs in Tauri's async pool)
-    let secret = tokio::task::spawn_blocking(move || derive_iroh_secret_from_titan(&pin))
-        .await
-        .map_err(|e| format!("Titan derivation task failed: {}", e))?
-        .map_err(|e| format!("Titan derivation failed: {:?}", e))?;
+pub async fn iroh_host_start(state: State<'_, AppState>) -> Result<HostStatus, String> {
+    // Read identity from keyring — no Titan needed
+    let secret_bytes = load_identity_from_keyring()
+        .map_err(|e| format!("Keyring read failed: {:?}", e))?
+        .ok_or_else(|| "Not registered. Click 'Register Key' first.".to_string())?;
 
+    let secret = SecretKey::from_bytes(&secret_bytes);
     let node_id = secret.public().to_string();
 
     let endpoint = Endpoint::builder(presets::N0)

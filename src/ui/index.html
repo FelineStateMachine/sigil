@@ -167,6 +167,10 @@
     <div class="card">
       <h2>Host (Server)</h2>
       <div class="row">
+        <span class="label">Registration</span>
+        <span id="reg-status" class="status-badge status-pending">Not registered</span>
+      </div>
+      <div class="row">
         <span class="label">Status</span>
         <span id="host-status" class="status-badge status-pending">Not started</span>
       </div>
@@ -175,10 +179,13 @@
         <span id="host-id" class="value">—</span>
       </div>
       <div class="btn-bar">
-        <button class="btn btn-primary" onclick="startHost()">Start hosting</button>
+        <button class="btn btn-primary" onclick="registerKey()">Register Key</button>
+        <button class="btn" onclick="startHost()">Start Hosting</button>
+        <button class="btn" onclick="unregister()" style="margin-left:auto; font-size:11px; opacity:0.6;">Unregister</button>
       </div>
       <div class="titan-hint">
-        Tap Titan when it blinks. Identity derived from key — no address to share.
+        Register: one-time Titan tap, stores identity in OS keyring.
+        Start Hosting: no key needed.
       </div>
     </div>
 
@@ -254,19 +261,75 @@
       }
     }
 
-    // ─── Host ──────────────────────────────────────────────────────────
-    async function startHost() {
+    // ─── Host Registration ─────────────────────────────────────────────
+    async function checkRegistration() {
+      try {
+        const reg = await invoke('host_registration_status');
+        const badge = document.getElementById('reg-status');
+        if (reg.registered) {
+          badge.className = 'status-badge status-ok';
+          badge.textContent = 'Registered';
+          document.getElementById('host-id').textContent =
+            reg.node_id.substring(0, 16) + '...';
+        } else if (reg.error) {
+          badge.className = 'status-badge status-err';
+          badge.textContent = 'Error';
+        } else {
+          badge.className = 'status-badge status-pending';
+          badge.textContent = 'Not registered';
+        }
+      } catch (e) {
+        console.error('registration check failed:', e);
+      }
+    }
+
+    async function registerKey() {
       const pin = document.getElementById('pin-input').value.trim();
       if (!pin) {
         alert('Enter Titan PIN first');
         return;
       }
 
+      const badge = document.getElementById('reg-status');
+      badge.className = 'status-badge status-pending';
+      badge.innerHTML = '<span class="spinner"></span> Tap Titan...';
+      try {
+        const result = await invoke('titan_register_host', { pin });
+        if (result.registered) {
+          badge.className = 'status-badge status-ok';
+          badge.textContent = 'Registered';
+          document.getElementById('host-id').textContent =
+            result.node_id.substring(0, 16) + '...';
+        } else {
+          badge.className = 'status-badge status-err';
+          badge.textContent = 'Failed';
+        }
+      } catch (e) {
+        badge.className = 'status-badge status-err';
+        badge.textContent = 'Error: ' + e;
+      }
+    }
+
+    async function unregister() {
+      if (!confirm('Remove registered identity from keyring?')) return;
+      try {
+        await invoke('host_unregister');
+        const badge = document.getElementById('reg-status');
+        badge.className = 'status-badge status-pending';
+        badge.textContent = 'Not registered';
+        document.getElementById('host-id').textContent = '—';
+      } catch (e) {
+        alert('Unregister failed: ' + e);
+      }
+    }
+
+    // ─── Host ──────────────────────────────────────────────────────────
+    async function startHost() {
       const status = document.getElementById('host-status');
       status.className = 'status-badge status-pending';
-      status.innerHTML = '<span class="spinner"></span> Tap Titan...';
+      status.innerHTML = '<span class="spinner"></span> Starting...';
       try {
-        const result = await invoke('iroh_host_start', { pin });
+        const result = await invoke('iroh_host_start');
         if (result.running) {
           status.className = 'status-badge status-ok';
           status.textContent = 'Hosting';
@@ -476,6 +539,9 @@
         sendInput({ t: 'tx', s: e.key });
       }
     });
+
+    // ─── Init ──────────────────────────────────────────────────────────
+    checkRegistration();
   </script>
 </body>
 </html>
