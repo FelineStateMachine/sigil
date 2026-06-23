@@ -747,6 +747,9 @@
       document.getElementById('action-disconnect').classList.add('hidden');
       document.getElementById('sep-disconnect').classList.add('hidden');
       document.getElementById('action-main').style.display = '';
+      // Clear intro status fields
+      document.getElementById('intro-status-unreg').textContent = '';
+      document.getElementById('intro-status-reg').textContent = '';
     }
 
     // ─── Unregister ─────────────────────────────────────────────────────
@@ -831,8 +834,6 @@
     listen('frame-error', (event) => {
       if (connected) {
         disconnect();
-        setStatus('err', 'disconnected');
-        document.getElementById('placeholder').textContent = event.payload;
       }
     });
 
