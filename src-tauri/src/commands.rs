@@ -29,6 +29,7 @@ use openh264::encoder::Encoder;
 use openh264::formats::{RgbSliceU8, YUVBuffer, YUVSource};
 use openh264::nal_units;
 use std::io::Cursor;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
@@ -300,7 +301,11 @@ fn key_from_str(s: &str) -> Option<Key> {
 
 pub struct AppState {
     pub host: Mutex<Option<HostState>>,
+    pub host_connections: Arc<AtomicU32>,
+    pub host_endpoint: TokioMutex<Option<Endpoint>>,
     pub input_send: TokioMutex<Option<tokio::sync::mpsc::UnboundedSender<InputEvent>>>,
+    pub client_endpoint: TokioMutex<Option<Endpoint>>,
+    pub daemon: bool,
 }
 
 pub struct HostState {
@@ -309,9 +314,14 @@ pub struct HostState {
 
 impl Default for AppState {
     fn default() -> Self {
+        let daemon = std::env::args().any(|a| a == "--daemon");
         Self {
             host: Mutex::new(None),
+            host_connections: Arc::new(AtomicU32::new(0)),
+            host_endpoint: TokioMutex::new(None),
             input_send: TokioMutex::new(None),
+            client_endpoint: TokioMutex::new(None),
+            daemon,
         }
     }
 }
@@ -456,6 +466,13 @@ pub fn titan_derive_identity(pin: String) -> TitanIdentity {
     }
 }
 
+// ─── Daemon mode ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn is_daemon_mode(state: State<'_, AppState>) -> bool {
+    state.daemon
+}
+
 // ─── Host Registration (keyring) ─────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -523,11 +540,14 @@ pub struct HostStatus {
 }
 
 #[tauri::command]
-pub async fn iroh_host_start(state: State<'_, AppState>) -> Result<HostStatus, String> {
+pub async fn iroh_host_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<HostStatus, String> {
     // Read identity from keyring — no Titan needed
     let secret_bytes = load_identity_from_keyring()
         .map_err(|e| format!("Keyring read failed: {:?}", e))?
-        .ok_or_else(|| "Not registered. Click 'Register Key' first.".to_string())?;
+        .ok_or_else(|| "Not registered. Click 'Register' first.".to_string())?;
 
     let secret = SecretKey::from_bytes(&secret_bytes);
     let node_id = secret.public().to_string();
@@ -540,15 +560,26 @@ pub async fn iroh_host_start(state: State<'_, AppState>) -> Result<HostStatus, S
 
     let _ = tokio::time::timeout(Duration::from_secs(5), endpoint.online()).await;
 
-    let frame_handler = Arc::new(FrameStreamHandler);
-    let input_handler = Arc::new(InputStreamHandler);
+    let connections = state.host_connections.clone();
+    let frame_handler = Arc::new(FrameStreamHandler {
+        connections: connections.clone(),
+        app: app.clone(),
+    });
+    let input_handler = Arc::new(InputStreamHandler {
+        connections: connections.clone(),
+        app: app.clone(),
+    });
 
     let router = Router::builder(endpoint.clone())
         .accept(FRAME_ALPN, frame_handler)
         .accept(INPUT_ALPN, input_handler)
         .spawn();
 
-    std::mem::forget(endpoint);
+    // Store endpoint and router for clean shutdown
+    {
+        let mut he = state.host_endpoint.lock().await;
+        *he = Some(endpoint);
+    }
     std::mem::forget(router);
 
     let mut host = state.host.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -561,6 +592,21 @@ pub async fn iroh_host_start(state: State<'_, AppState>) -> Result<HostStatus, S
         node_id: Some(node_id),
         error: None,
     })
+}
+
+#[tauri::command]
+pub async fn iroh_host_stop(state: State<'_, AppState>) -> Result<bool, String> {
+    {
+        let mut he = state.host_endpoint.lock().await;
+        if let Some(endpoint) = he.take() {
+            endpoint.close().await;
+        }
+    }
+    {
+        let mut host = state.host.lock().map_err(|e| format!("Lock error: {}", e))?;
+        *host = None;
+    }
+    Ok(true)
 }
 
 #[tauri::command]
@@ -590,13 +636,22 @@ pub fn iroh_host_status(state: State<'_, AppState>) -> HostStatus {
 // ─── Frame Stream Handler (host side) ────────────────────────────────────────
 
 #[derive(Debug)]
-struct FrameStreamHandler;
+struct FrameStreamHandler {
+    connections: Arc<AtomicU32>,
+    app: AppHandle,
+}
 
 impl ProtocolHandler for FrameStreamHandler {
     async fn accept(&self, conn: Connection) -> Result<(), iroh::protocol::AcceptError> {
+        let count = self.connections.fetch_add(1, Ordering::SeqCst) + 1;
+        let _ = self.app.emit("host-connections", count);
+        eprintln!("[host] client connected: {} (total: {})", conn.remote_id(), count);
         if let Err(e) = stream_frames(conn).await {
             eprintln!("[host] stream error: {}", e);
         }
+        let count = self.connections.fetch_sub(1, Ordering::SeqCst) - 1;
+        let _ = self.app.emit("host-connections", count);
+        eprintln!("[host] client disconnected (total: {})", count);
         Ok(())
     }
 }
@@ -674,7 +729,10 @@ async fn stream_frames(conn: Connection) -> anyhow::Result<()> {
 // ─── Input Stream Handler (host side) ─────────────────────────────────────────
 
 #[derive(Debug)]
-struct InputStreamHandler;
+struct InputStreamHandler {
+    connections: Arc<AtomicU32>,
+    app: AppHandle,
+}
 
 impl ProtocolHandler for InputStreamHandler {
     async fn accept(&self, conn: Connection) -> Result<(), iroh::protocol::AcceptError> {
@@ -840,6 +898,12 @@ pub async fn iroh_client_connect(
         *input_send_guard = Some(tx);
     }
 
+    // Store endpoint for disconnect
+    {
+        let mut ce = state.client_endpoint.lock().await;
+        *ce = Some(endpoint.clone());
+    }
+
     // Spawn input forwarder
     let mut input_stream = input_send;
     tokio::spawn(async move {
@@ -965,4 +1029,21 @@ pub async fn iroh_client_send_input(
         }
         None => Err("Not connected to host".into()),
     }
+}
+
+#[tauri::command]
+pub async fn iroh_client_disconnect(state: State<'_, AppState>) -> Result<bool, String> {
+    // Close endpoint — kills all streams
+    {
+        let mut ce = state.client_endpoint.lock().await;
+        if let Some(endpoint) = ce.take() {
+            endpoint.close().await;
+        }
+    }
+    // Clear input channel
+    {
+        let mut input_send = state.input_send.lock().await;
+        *input_send = None;
+    }
+    Ok(true)
 }

@@ -13,12 +13,15 @@ fn main() {
             commands::fido_device_info,
             commands::fido_pin_retries,
             commands::titan_derive_identity,
+            commands::is_daemon_mode,
             commands::host_registration_status,
             commands::titan_register_host,
             commands::host_unregister,
             commands::iroh_host_start,
+            commands::iroh_host_stop,
             commands::iroh_host_status,
             commands::iroh_client_connect,
+            commands::iroh_client_disconnect,
             commands::iroh_client_send_input,
         ])
         .run(tauri::generate_context!())

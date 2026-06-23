@@ -35,7 +35,7 @@
       -webkit-font-smoothing: antialiased;
     }
 
-    /* ─── Top bar (minimal, no navbar feel) ────────────────────────────── */
+    /* ─── Top bar ─────────────────────────────────────────────────────── */
     .topbar {
       display: flex;
       align-items: center;
@@ -101,7 +101,7 @@
       text-decoration-color: currentColor;
     }
 
-    /* ─── Main (video) ────────────────────────────────────────────────── */
+    /* ─── Main area ───────────────────────────────────────────────────── */
     .main {
       flex: 1;
       display: flex;
@@ -125,6 +125,18 @@
       padding: 40px;
     }
     .placeholder.hidden { display: none; }
+
+    /* Hosting info panel */
+    .host-info {
+      text-align: center;
+      color: var(--muted-fg);
+      font-family: var(--mono);
+      padding: 40px;
+    }
+    .host-info.hidden { display: none; }
+    .host-info .label { font-size: 11px; color: var(--muted-fg); margin-bottom: 4px; }
+    .host-info .value { font-size: 16px; color: var(--foreground); margin-bottom: 20px; }
+    .host-info .conn-count { font-size: 24px; color: var(--green); }
 
     /* Stats overlay */
     .stats {
@@ -170,7 +182,7 @@
       text-decoration-color: currentColor;
     }
 
-    /* ─── Bottom bar (status bar — vim/gitdot style) ───────────────────── */
+    /* ─── Bottom bar ──────────────────────────────────────────────────── */
     .bottombar {
       display: flex;
       align-items: center;
@@ -196,6 +208,8 @@
       text-decoration-color: currentColor;
     }
     .bottombar .action.primary { color: var(--foreground); }
+    .bottombar .action.danger { color: var(--destructive); opacity: 0.7; }
+    .bottombar .action.danger:hover { opacity: 1; }
     .bottombar .spacer { flex: 1; }
     .pin-group {
       display: flex;
@@ -217,13 +231,15 @@
       outline: none;
       border-bottom-color: var(--foreground);
     }
+    .pin-input.hidden { display: none; }
     .pin-label {
       font-size: 11px;
       color: var(--muted-fg);
     }
+    .pin-label.hidden { display: none; }
 
-    /* ─── Setup screen ────────────────────────────────────────────────── */
-    .setup {
+    /* ─── Intro / overlay screen ──────────────────────────────────────── */
+    .overlay-screen {
       position: fixed;
       inset: 0;
       z-index: 100;
@@ -232,32 +248,32 @@
       justify-content: center;
       background: var(--background);
     }
-    .setup.hidden { display: none; }
-    .setup-content {
+    .overlay-screen.hidden { display: none; }
+    .overlay-content {
       text-align: center;
       max-width: 360px;
       padding: 40px;
     }
-    .setup-content h1 {
+    .overlay-content h1 {
       font-family: var(--mono);
       font-size: 16px;
       font-weight: 500;
       color: var(--foreground);
       margin-bottom: 12px;
     }
-    .setup-content p {
+    .overlay-content p {
       font-size: 13px;
       color: var(--muted-fg);
       line-height: 1.6;
       margin-bottom: 24px;
     }
-    .setup-form {
+    .overlay-form {
       display: flex;
       gap: 8px;
       justify-content: center;
       align-items: center;
     }
-    .setup-input {
+    .overlay-input {
       width: 120px;
       text-align: center;
       background: transparent;
@@ -268,11 +284,11 @@
       font-family: var(--mono);
       font-size: 14px;
     }
-    .setup-input:focus {
+    .overlay-input:focus {
       outline: none;
       border-bottom-color: var(--foreground);
     }
-    .setup-btn {
+    .overlay-btn {
       font-family: var(--mono);
       font-size: 13px;
       color: var(--muted-fg);
@@ -284,24 +300,24 @@
       text-decoration-color: transparent;
       transition: color 0.1s, text-decoration-color 0.1s;
     }
-    .setup-btn:hover {
+    .overlay-btn:hover {
       color: var(--foreground);
       text-decoration-color: currentColor;
     }
-    .setup-btn:disabled {
+    .overlay-btn:disabled {
       opacity: 0.4;
       cursor: not-allowed;
     }
-    .setup-status {
+    .overlay-status {
       font-family: var(--mono);
       font-size: 12px;
       color: var(--muted-fg);
       margin-top: 16px;
       min-height: 16px;
     }
-    .setup-status.pending { color: var(--yellow); }
-    .setup-status.err { color: var(--destructive); }
-    .setup-status.ok { color: var(--green); }
+    .overlay-status.pending { color: var(--yellow); }
+    .overlay-status.err { color: var(--destructive); }
+    .overlay-status.ok { color: var(--green); }
 
     /* ─── Side panel ──────────────────────────────────────────────────── */
     .panel-overlay {
@@ -372,45 +388,45 @@
   </style>
 </head>
 <body>
-  <!-- Titan tap overlay -->
-  <div class="setup hidden" id="tap-overlay" style="z-index: 200;">
-    <div class="setup-content">
+  <!-- Tap titan overlay -->
+  <div class="overlay-screen hidden" id="tap-overlay" style="z-index: 200;">
+    <div class="overlay-content">
       <h1>tap titan</h1>
       <p>Touch the sensor on your key when it blinks.</p>
-      <div class="setup-status pending" id="tap-status">waiting...</div>
+      <div class="overlay-status pending" id="tap-status">waiting...</div>
     </div>
   </div>
 
-  <!-- Intro screen (adaptive — shows both workflows) -->
-  <div class="setup hidden" id="setup">
-    <div class="setup-content">
-      <h1 id="intro-title">keyhome</h1>
+  <!-- Intro screen -->
+  <div class="overlay-screen hidden" id="intro">
+    <div class="overlay-content">
+      <h1>keyhome</h1>
       <p id="intro-desc">Plug in your Titan key and choose an action.</p>
 
       <!-- Unregistered: register or connect -->
       <div id="intro-unregistered">
-        <div class="setup-form">
-          <input class="setup-input" id="setup-pin" type="password" placeholder="PIN" autocomplete="off" />
+        <div class="overlay-form">
+          <input class="overlay-input" id="intro-pin-unreg" type="password" placeholder="PIN" autocomplete="off" />
         </div>
         <div style="display: flex; gap: 16px; justify-content: center; margin-top: 12px;">
-          <button class="setup-btn" id="setup-btn" onclick="setupRegister()">register</button>
-          <button class="setup-btn" onclick="introConnect()">connect</button>
+          <button class="overlay-btn" onclick="introRegister()">register</button>
+          <button class="overlay-btn" onclick="introConnectUnreg()">connect</button>
         </div>
-        <div class="setup-status" id="setup-status"></div>
+        <div class="overlay-status" id="intro-status-unreg"></div>
       </div>
 
       <!-- Registered: host or connect -->
       <div id="intro-registered" style="display: none;">
         <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 16px;">
-          <button class="setup-btn" onclick="introHost()">host</button>
+          <button class="overlay-btn" onclick="introHost()">host</button>
         </div>
-        <div class="setup-form">
-          <input class="setup-input" id="intro-pin" type="password" placeholder="PIN" autocomplete="off" />
+        <div class="overlay-form">
+          <input class="overlay-input" id="intro-pin-reg" type="password" placeholder="PIN" autocomplete="off" />
         </div>
         <div style="display: flex; gap: 16px; justify-content: center; margin-top: 12px;">
-          <button class="setup-btn" onclick="introConnectRegistered()">connect</button>
+          <button class="overlay-btn" onclick="introConnectReg()">connect</button>
         </div>
-        <div class="setup-status" id="setup-status-reg"></div>
+        <div class="overlay-status" id="intro-status-reg"></div>
       </div>
     </div>
   </div>
@@ -429,11 +445,15 @@
     </div>
   </div>
 
-  <!-- Main / Video -->
+  <!-- Main area -->
   <div class="main">
     <canvas id="frame-canvas"></canvas>
-    <div class="placeholder" id="placeholder">
-      no stream
+    <div class="placeholder" id="placeholder">no stream</div>
+    <div class="host-info hidden" id="host-info">
+      <div class="label">hosting</div>
+      <div class="value" id="host-node-id"></div>
+      <div class="label">connections</div>
+      <div class="conn-count" id="host-conn-count">0</div>
     </div>
     <div class="stats" id="stats"></div>
     <div class="control-bar" id="control-bar">
@@ -443,20 +463,20 @@
     </div>
   </div>
 
-  <!-- Bottom bar (status bar) -->
+  <!-- Bottom bar -->
   <div class="bottombar">
-    <span class="prompt" id="bottom-action">keyhome</span>
+    <span class="prompt">keyhome</span>
     <span class="sep">»</span>
-    <span class="action primary" id="action-host" onclick="startHost()">host</span>
+    <span class="action primary" id="action-main" onclick="mainAction()">host</span>
     <span class="sep">·</span>
-    <span class="action" id="action-unreg" onclick="unregister()" style="color: var(--destructive); opacity: 0.6;">unregister</span>
+    <span class="action danger hidden" id="action-disconnect" onclick="disconnect()">disconnect</span>
+    <span class="sep hidden" id="sep-disconnect">·</span>
+    <span class="action" id="action-unreg" onclick="unregister()">unregister</span>
     <div class="spacer"></div>
-    <div class="pin-group">
-      <span class="pin-label">pin</span>
-      <input class="pin-input" id="pin-input" type="password" placeholder="····" autocomplete="off" />
-    </div>
+    <span class="pin-label" id="pin-label">pin</span>
+    <input class="pin-input" id="pin-input" type="password" placeholder="····" autocomplete="off" />
     <span class="sep">·</span>
-    <span class="action primary" onclick="connectHost()">connect</span>
+    <span class="action primary" id="action-connect" onclick="connectHost()">connect</span>
   </div>
 
   <!-- Side panel -->
@@ -475,7 +495,7 @@
         <div class="info-row"><span class="info-label">ctap</span><span class="info-value" id="fido-versions">—</span></div>
         <div class="info-row"><span class="info-label">extensions</span><span class="info-value" id="fido-extensions">—</span></div>
         <div class="info-row"><span class="info-label">pin retries</span><span class="info-value" id="fido-pin">—</span></div>
-        <button class="link-btn" style="margin-top: 8px;" onclick="scanFido()">scan</button>
+        <button class="link-btn" style="margin-top: 8px;" onclick="scanFido()">rescan</button>
       </div>
       <div class="panel-section">
         <h3># registration</h3>
@@ -506,6 +526,11 @@
       txt.textContent = text;
     }
 
+    function showIntro() { document.getElementById('intro').classList.remove('hidden'); }
+    function hideIntro() { document.getElementById('intro').classList.add('hidden'); }
+    function showTap() { document.getElementById('tap-overlay').classList.remove('hidden'); }
+    function hideTap() { document.getElementById('tap-overlay').classList.add('hidden'); }
+
     // ─── Registration ───────────────────────────────────────────────────
     async function checkRegistration() {
       try {
@@ -514,7 +539,6 @@
         const unregDiv = document.getElementById('intro-unregistered');
         const regDiv = document.getElementById('intro-registered');
         if (reg.registered) {
-          document.getElementById('setup').classList.remove('hidden');
           unregDiv.style.display = 'none';
           regDiv.style.display = 'block';
           document.getElementById('node-id-text').textContent =
@@ -522,36 +546,74 @@
           document.getElementById('reg-status').textContent = 'registered';
           document.getElementById('reg-node-id').textContent =
             reg.node_id.substring(0, 24) + '...';
+          // Bottom bar: show host + unregister
+          document.getElementById('action-main').textContent = 'host';
+          document.getElementById('action-unreg').style.display = '';
         } else {
-          document.getElementById('setup').classList.remove('hidden');
           unregDiv.style.display = 'block';
           regDiv.style.display = 'none';
-          document.getElementById('reg-status').textContent = 'not registered';
+          document.getElementById('reg-status').textContent = 'client-only';
+          // Bottom bar: show register, hide unregister
+          document.getElementById('action-main').textContent = 'register';
+          document.getElementById('action-unreg').style.display = 'none';
+        }
+
+        // Check daemon mode — auto-host if --daemon flag
+        const daemon = await invoke('is_daemon_mode');
+        if (daemon && reg.registered) {
+          hideIntro();
+          await startHost();
+        } else {
+          showIntro();
         }
       } catch (e) {
         console.error('registration check failed:', e);
+        showIntro();
       }
     }
 
-    // ─── Tap overlay ───────────────────────────────────────────────────
-    function showTap() {
-      document.getElementById('tap-overlay').classList.remove('hidden');
-    }
-    function hideTap() {
-      document.getElementById('tap-overlay').classList.add('hidden');
-    }
-
-    // ─── Intro actions ─────────────────────────────────────────────────
-    function hideIntro() {
-      document.getElementById('setup').classList.add('hidden');
-    }
-
-    async function introConnect() {
-      const pin = document.getElementById('setup-pin').value.trim();
+    // ─── Intro actions ──────────────────────────────────────────────────
+    async function introRegister() {
+      const pin = document.getElementById('intro-pin-unreg').value.trim();
+      const status = document.getElementById('intro-status-unreg');
       if (!pin) {
-        const s = document.getElementById('setup-status');
-        s.className = 'setup-status err';
-        s.textContent = 'enter pin';
+        status.className = 'overlay-status err';
+        status.textContent = 'enter pin';
+        return;
+      }
+      hideIntro();
+      showTap();
+      try {
+        const result = await invoke('titan_register_host', { pin });
+        if (result.registered) {
+          hideTap();
+          registered = true;
+          document.getElementById('node-id-text').textContent =
+            result.node_id.substring(0, 16) + '...';
+          document.getElementById('action-main').textContent = 'host';
+          document.getElementById('action-unreg').style.display = '';
+          // Show intro again with registered state
+          await checkRegistration();
+        } else {
+          hideTap();
+          showIntro();
+          status.className = 'overlay-status err';
+          status.textContent = 'failed';
+        }
+      } catch (e) {
+        hideTap();
+        showIntro();
+        status.className = 'overlay-status err';
+        status.textContent = 'error: ' + e;
+      }
+    }
+
+    async function introConnectUnreg() {
+      const pin = document.getElementById('intro-pin-unreg').value.trim();
+      const status = document.getElementById('intro-status-unreg');
+      if (!pin) {
+        status.className = 'overlay-status err';
+        status.textContent = 'enter pin';
         return;
       }
       hideIntro();
@@ -561,12 +623,12 @@
       hideTap();
     }
 
-    async function introConnectRegistered() {
-      const pin = document.getElementById('intro-pin').value.trim();
+    async function introConnectReg() {
+      const pin = document.getElementById('intro-pin-reg').value.trim();
+      const status = document.getElementById('intro-status-reg');
       if (!pin) {
-        const s = document.getElementById('setup-status-reg');
-        s.className = 'setup-status err';
-        s.textContent = 'enter pin';
+        status.className = 'overlay-status err';
+        status.textContent = 'enter pin';
         return;
       }
       hideIntro();
@@ -581,54 +643,8 @@
       await startHost();
     }
 
-    // ─── Setup (register from intro) ────────────────────────────────────
-    async function setupRegister() {
-      const pin = document.getElementById('setup-pin').value.trim();
-      const btn = document.getElementById('setup-btn');
-      const status = document.getElementById('setup-status');
-      if (!pin) {
-        status.className = 'setup-status err';
-        status.textContent = 'enter pin';
-        return;
-      }
-      btn.disabled = true;
-      hideIntro();
-      showTap();
-      try {
-        const result = await invoke('titan_register_host', { pin });
-        if (result.registered) {
-          hideTap();
-          registered = true;
-          document.getElementById('node-id-text').textContent =
-            result.node_id.substring(0, 16) + '...';
-          checkRegistration();
-        } else {
-          hideTap();
-          document.getElementById('setup').classList.remove('hidden');
-          status.className = 'setup-status err';
-          status.textContent = 'failed';
-          btn.disabled = false;
-        }
-      } catch (e) {
-        hideTap();
-        document.getElementById('setup').classList.remove('hidden');
-        status.className = 'setup-status err';
-        status.textContent = 'error: ' + e;
-        btn.disabled = false;
-      }
-    }
-
     // ─── Host ───────────────────────────────────────────────────────────
     async function startHost() {
-      const action = document.getElementById('action-host');
-      if (hosting) {
-        // TODO: wire iroh_host_stop
-        hosting = false;
-        setStatus('', 'idle');
-        action.textContent = 'host';
-        return;
-      }
-      action.style.opacity = '0.4';
       setStatus('pending', 'starting...');
       try {
         const result = await invoke('iroh_host_start');
@@ -637,15 +653,49 @@
           setStatus('ok', 'hosting');
           document.getElementById('node-id-text').textContent =
             result.node_id.substring(0, 16) + '...';
-          action.textContent = 'stop';
-          action.style.opacity = '1';
+          document.getElementById('action-main').textContent = 'stop';
+          document.getElementById('action-unreg').style.display = 'none';
+          // Show host info panel, hide placeholder
+          document.getElementById('placeholder').classList.add('hidden');
+          document.getElementById('host-info').classList.remove('hidden');
+          document.getElementById('host-node-id').textContent =
+            result.node_id.substring(0, 24) + '...';
+          // Hide pin + connect when hosting
+          document.getElementById('pin-label').classList.add('hidden');
+          document.getElementById('pin-input').classList.add('hidden');
+          document.getElementById('action-connect').style.display = 'none';
         } else {
           setStatus('err', 'failed');
-          action.style.opacity = '1';
         }
       } catch (e) {
         setStatus('err', 'error');
-        action.style.opacity = '1';
+      }
+    }
+
+    async function stopHost() {
+      try {
+        await invoke('iroh_host_stop');
+      } catch (e) { console.error(e); }
+      hosting = false;
+      setStatus('', 'idle');
+      document.getElementById('action-main').textContent = registered ? 'host' : 'register';
+      document.getElementById('action-unreg').style.display = registered ? '' : 'none';
+      document.getElementById('host-info').classList.add('hidden');
+      document.getElementById('placeholder').classList.remove('hidden');
+      document.getElementById('pin-label').classList.remove('hidden');
+      document.getElementById('pin-input').classList.remove('hidden');
+      document.getElementById('action-connect').style.display = '';
+    }
+
+    // ─── Main action (host/stop/register) ───────────────────────────────
+    async function mainAction() {
+      if (hosting) {
+        await stopHost();
+      } else if (registered) {
+        await startHost();
+      } else {
+        // Not registered — show intro for registration
+        showIntro();
       }
     }
 
@@ -656,7 +706,7 @@
         setStatus('err', 'enter pin');
         return;
       }
-      setStatus('pending', 'tap titan...');
+      setStatus('pending', 'connecting...');
       try {
         const result = await invoke('iroh_client_connect', { pin });
         if (result.connected) {
@@ -667,12 +717,36 @@
           document.getElementById('frame-canvas').style.display = 'block';
           document.getElementById('placeholder').classList.add('hidden');
           document.getElementById('control-bar').classList.add('visible');
+          // Show disconnect, hide connect
+          document.getElementById('action-connect').style.display = 'none';
+          document.getElementById('action-disconnect').classList.remove('hidden');
+          document.getElementById('sep-disconnect').classList.remove('hidden');
+          document.getElementById('action-main').style.display = 'none';
         } else {
           setStatus('err', 'failed');
         }
       } catch (e) {
         setStatus('err', 'error');
       }
+    }
+
+    async function disconnect() {
+      try {
+        await invoke('iroh_client_disconnect');
+      } catch (e) { console.error(e); }
+      connected = false;
+      controlMode = false;
+      updateControlUI();
+      setStatus('', 'idle');
+      document.getElementById('frame-canvas').style.display = 'none';
+      document.getElementById('placeholder').classList.remove('hidden');
+      document.getElementById('placeholder').textContent = 'no stream';
+      document.getElementById('stats').classList.remove('visible');
+      document.getElementById('control-bar').classList.remove('visible');
+      document.getElementById('action-connect').style.display = '';
+      document.getElementById('action-disconnect').classList.add('hidden');
+      document.getElementById('sep-disconnect').classList.add('hidden');
+      document.getElementById('action-main').style.display = '';
     }
 
     // ─── Unregister ─────────────────────────────────────────────────────
@@ -683,9 +757,11 @@
         registered = false;
         setStatus('', 'idle');
         document.getElementById('node-id-text').textContent = '';
-        document.getElementById('reg-status').textContent = 'not registered';
+        document.getElementById('reg-status').textContent = 'client-only';
         document.getElementById('reg-node-id').textContent = '—';
-        document.getElementById('setup').classList.remove('hidden');
+        document.getElementById('action-main').textContent = 'register';
+        document.getElementById('action-unreg').style.display = 'none';
+        showIntro();
       } catch (e) {
         alert('unregister failed: ' + e);
       }
@@ -695,9 +771,10 @@
     async function scanFido() {
       try {
         const info = await invoke('fido_device_info');
+        const el = document.getElementById('fido-status');
         if (info.found && !info.error) {
-          document.getElementById('fido-status').textContent = 'connected';
-          document.getElementById('fido-status').style.color = 'var(--green)';
+          el.textContent = 'connected';
+          el.style.color = 'var(--green)';
           document.getElementById('fido-product').textContent = info.product;
           document.getElementById('fido-vidpid').textContent =
             `0x${info.vid.toString(16)}:0x${info.pid.toString(16)}`;
@@ -705,8 +782,8 @@
           document.getElementById('fido-extensions').textContent = info.extensions.join(', ');
           document.getElementById('fido-pin').textContent = info.pin_retries;
         } else {
-          document.getElementById('fido-status').textContent = info.error || 'no device';
-          document.getElementById('fido-status').style.color = 'var(--destructive)';
+          el.textContent = info.error || 'no device';
+          el.style.color = 'var(--muted-fg)';
         }
       } catch (e) {
         console.error(e);
@@ -715,11 +792,14 @@
 
     // ─── Panel ──────────────────────────────────────────────────────────
     function togglePanel() {
-      const panel = document.getElementById('panel');
-      const overlay = document.getElementById('panel-overlay');
-      panel.classList.toggle('visible');
-      overlay.classList.toggle('visible');
+      document.getElementById('panel').classList.toggle('visible');
+      document.getElementById('panel-overlay').classList.toggle('visible');
     }
+
+    // ─── Host connection events ─────────────────────────────────────────
+    listen('host-connections', (event) => {
+      document.getElementById('host-conn-count').textContent = event.payload;
+    });
 
     // ─── Frames ─────────────────────────────────────────────────────────
     const canvas = document.getElementById('frame-canvas');
@@ -749,15 +829,11 @@
     });
 
     listen('frame-error', (event) => {
-      setStatus('err', 'disconnected');
-      document.getElementById('frame-canvas').style.display = 'none';
-      document.getElementById('placeholder').classList.remove('hidden');
-      document.getElementById('placeholder').textContent = event.payload;
-      document.getElementById('stats').classList.remove('visible');
-      document.getElementById('control-bar').classList.remove('visible');
-      connected = false;
-      controlMode = false;
-      updateControlUI();
+      if (connected) {
+        disconnect();
+        setStatus('err', 'disconnected');
+        document.getElementById('placeholder').textContent = event.payload;
+      }
     });
 
     // ─── Input ──────────────────────────────────────────────────────────
@@ -858,6 +934,7 @@
 
     // ─── Init ───────────────────────────────────────────────────────────
     checkRegistration();
+    scanFido();
   </script>
 </body>
 </html>
