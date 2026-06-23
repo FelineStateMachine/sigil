@@ -924,16 +924,8 @@ pub async fn iroh_client_connect(
         let _ = input_stream.finish();
     });
 
-    // Spawn frame reader (H.264 decode → JPEG for canvas)
+    // Spawn frame reader (H.264 pass-through to frontend WebCodecs decoder)
     tokio::spawn(async move {
-        let mut decoder = match openh264::decoder::Decoder::new() {
-            Ok(d) => d,
-            Err(e) => {
-                let _ = app.emit("frame-error", format!("Decoder init failed: {}", e));
-                return;
-            }
-        };
-
         let mut frame_count = 0u32;
         let start = Instant::now();
 
@@ -945,11 +937,11 @@ pub async fn iroh_client_connect(
                 break;
             }
 
-            let _w = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-            let _h = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+            let w = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+            let h = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
             let h264_len =
                 u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize;
-            let _is_keyframe = header[12] == 1;
+            let is_keyframe = header[12] == 1;
 
             let mut h264_buf = vec![0u8; h264_len];
             if frame_recv.read_exact(&mut h264_buf).await.is_err() {
@@ -957,49 +949,24 @@ pub async fn iroh_client_connect(
                 break;
             }
 
-            // Decode H.264 → YUV → RGB8 → RGBA → base64 (no JPEG re-encode)
-            for nal in nal_units(&h264_buf) {
-                match decoder.decode(nal) {
-                    Ok(Some(yuv)) => {
-                        let (yw, yh) = yuv.dimensions();
-                        let rgb_len = yuv.rgb8_len();
-                        let mut rgb_raw = vec![0u8; rgb_len];
-                        yuv.write_rgb8(&mut rgb_raw);
+            // Pass H.264 bytes directly to frontend — browser decodes via WebCodecs
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&h264_buf);
+            let _ = app.emit(
+                "frame",
+                FramePayload {
+                    width: w,
+                    height: h,
+                    data: b64,
+                },
+            );
 
-                        // Expand RGB8 → RGBA for ImageData
-                        let mut rgba_raw = vec![0u8; yw * yh * 4];
-                        let npix = yw * yh;
-                        for i in 0..npix {
-                            rgba_raw[i * 4]     = rgb_raw[i * 3];
-                            rgba_raw[i * 4 + 1] = rgb_raw[i * 3 + 1];
-                            rgba_raw[i * 4 + 2] = rgb_raw[i * 3 + 2];
-                            rgba_raw[i * 4 + 3] = 255;
-                        }
-
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(&rgba_raw);
-                        let _ = app.emit(
-                            "frame",
-                            FramePayload {
-                                width: yw as u32,
-                                height: yh as u32,
-                                data: b64,
-                            },
-                        );
-
-                        frame_count += 1;
-                        let elapsed = start.elapsed();
-                        let fps = frame_count as f64 / elapsed.as_secs_f64().max(0.001);
-                        let _ = app.emit(
-                            "frame-stats",
-                            serde_json::json!({ "fps": fps, "count": frame_count }),
-                        );
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        eprintln!("[client] decode error: {}", e);
-                    }
-                }
-            }
+            frame_count += 1;
+            let elapsed = start.elapsed();
+            let fps = frame_count as f64 / elapsed.as_secs_f64().max(0.001);
+            let _ = app.emit(
+                "frame-stats",
+                serde_json::json!({ "fps": fps, "count": frame_count, "keyframe": is_keyframe }),
+            );
         }
 
         drop(endpoint);
