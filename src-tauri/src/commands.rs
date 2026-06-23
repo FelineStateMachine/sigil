@@ -636,17 +636,17 @@ async fn stream_frames(conn: Connection) -> anyhow::Result<()> {
         };
         let h264_size = h264_data.len();
 
-        // Header: width(4) + height(4) + size(4) + is_keyframe(1)
-        let kf_byte = [0u8, 0u8, 0u8, if is_keyframe { 1u8 } else { 0u8 }];
+        // Header: width(4) + height(4) + size(4) + is_keyframe(1) = 13 bytes
         let header = [
             (w as u32).to_be_bytes(),
             (h as u32).to_be_bytes(),
             (h264_size as u32).to_be_bytes(),
-            kf_byte,
         ]
         .concat();
+        let kf_byte = if is_keyframe { 1u8 } else { 0u8 };
 
         send.write_all(&header).await?;
+        send.write_all(&[kf_byte]).await?;
         send.write_all(&h264_data).await?;
 
         frame_count += 1;
