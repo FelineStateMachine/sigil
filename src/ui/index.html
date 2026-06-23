@@ -62,6 +62,10 @@
       background: rgba(88,166,255,0.1); border-color: rgba(88,166,255,0.3);
       color: var(--accent);
     }
+    .btn-danger {
+      background: rgba(248,81,73,0.1); border-color: rgba(248,81,73,0.3);
+      color: var(--red);
+    }
     .btn-bar { display: flex; gap: 8px; margin-top: 12px; }
     .addr-box {
       margin-top: 12px; padding: 8px 12px;
@@ -93,7 +97,11 @@
       overflow: hidden; background: #000; position: relative;
       min-height: 300px; display: flex; align-items: center; justify-content: center;
     }
-    #frame-canvas { max-width: 100%; max-height: 500px; display: none; }
+    #frame-canvas {
+      max-width: 100%; max-height: 500px; display: none;
+      cursor: crosshair;
+    }
+    #frame-canvas.control-active { cursor: default; }
     .viewer-placeholder {
       color: var(--text-dim); font-size: 13px; padding: 60px 20px; text-align: center;
     }
@@ -109,6 +117,27 @@
       font-size: 12px; margin-left: 8px;
     }
     .copy-btn:hover { color: var(--accent); }
+    .control-bar {
+      display: flex; align-items: center; gap: 12px; margin-top: 12px;
+    }
+    .control-toggle {
+      display: flex; align-items: center; gap: 8px; cursor: pointer;
+      padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface); font-size: 13px;
+      transition: all 0.2s;
+    }
+    .control-toggle:hover { border-color: var(--accent); }
+    .control-toggle.active {
+      background: rgba(63,185,80,0.1); border-color: rgba(63,185,80,0.3);
+      color: var(--green);
+    }
+    .control-toggle .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim);
+    }
+    .control-toggle.active .dot { background: var(--green); }
+    .control-hint {
+      color: var(--text-dim); font-size: 11px;
+    }
   </style>
 </head>
 <body>
@@ -181,7 +210,7 @@
       <div id="connect-error" class="error-msg"></div>
     </div>
 
-    <!-- Frame Viewer -->
+    <!-- Frame Viewer + Input Control -->
     <div class="card viewer-card">
       <h2>Remote Screen <span id="viewer-stats" class="viewer-stats"></span></h2>
       <div class="viewer-wrap">
@@ -191,11 +220,20 @@
           and connect from another.
         </div>
       </div>
+      <div class="control-bar">
+        <div class="control-toggle" id="control-toggle" onclick="toggleControl()">
+          <span class="dot"></span>
+          <span id="control-label">Take Control</span>
+        </div>
+        <span class="control-hint" id="control-hint">Connect to a host first</span>
+      </div>
     </div>
   </div>
 
   <script>
     let hostAddrJson = '';
+    let controlMode = false;
+    let connected = false;
 
     // Access Tauri API lazily — avoids TDZ errors if __TAURI__ isn't ready yet
     const invoke = (...args) => window.__TAURI__.core.invoke(...args);
@@ -287,11 +325,13 @@
       try {
         const result = await invoke('iroh_client_connect', { addrJson: addr });
         if (result.connected) {
+          connected = true;
           errBox.style.color = 'var(--green)';
           errBox.textContent = 'Connected! Streaming frames...';
           errBox.classList.add('visible');
           document.getElementById('frame-canvas').style.display = 'block';
           document.getElementById('viewer-placeholder').style.display = 'none';
+          document.getElementById('control-hint').textContent = 'Click "Take Control" to send input';
         } else {
           errBox.style.color = 'var(--red)';
           errBox.textContent = result.error || 'Connection failed';
@@ -307,10 +347,13 @@
     // ─── Frame rendering ───────────────────────────────────────────────
     const canvas = document.getElementById('frame-canvas');
     const ctx = canvas.getContext('2d');
-    let lastFrameTime = 0;
+    let frameWidth = 0;
+    let frameHeight = 0;
 
     listen('frame', (event) => {
       const { width, height, data } = event.payload;
+      frameWidth = width;
+      frameHeight = height;
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
 
@@ -339,6 +382,143 @@
       document.getElementById('frame-canvas').style.display = 'none';
       document.getElementById('viewer-placeholder').style.display = 'block';
       document.getElementById('viewer-placeholder').textContent = 'Disconnected: ' + event.payload;
+      connected = false;
+      controlMode = false;
+      updateControlUI();
+    });
+
+    // ─── Input Control ─────────────────────────────────────────────────
+
+    function toggleControl() {
+      if (!connected) return;
+      controlMode = !controlMode;
+      updateControlUI();
+    }
+
+    function updateControlUI() {
+      const toggle = document.getElementById('control-toggle');
+      const label = document.getElementById('control-label');
+      const hint = document.getElementById('control-hint');
+      const canvas = document.getElementById('frame-canvas');
+
+      if (controlMode) {
+        toggle.classList.add('active');
+        label.textContent = 'Controlling';
+        hint.textContent = 'Mouse and keyboard are being sent. Click to toggle off.';
+        canvas.classList.add('control-active');
+      } else {
+        toggle.classList.remove('active');
+        label.textContent = 'Take Control';
+        if (connected) {
+          hint.textContent = 'Click "Take Control" to send input';
+        } else {
+          hint.textContent = 'Connect to a host first';
+        }
+        canvas.classList.remove('control-active');
+      }
+    }
+
+    // Scale canvas click coordinates to remote frame coordinates
+    function scaleCoords(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = frameWidth / rect.width;
+      const scaleY = frameHeight / rect.height;
+      return {
+        x: Math.round((clientX - rect.left) * scaleX),
+        y: Math.round((clientY - rect.top) * scaleY),
+      };
+    }
+
+    // Map JS key names to enigo key names
+    function mapKey(e) {
+      const key = e.key;
+      // Special keys
+      const map = {
+        'ArrowUp': 'Up',
+        'ArrowDown': 'Down',
+        'ArrowLeft': 'Left',
+        'ArrowRight': 'Right',
+        ' ': 'Space',
+        'Delete': 'Delete',
+        'Backspace': 'Backspace',
+        'Enter': 'Enter',
+        'Tab': 'Tab',
+        'Escape': 'Escape',
+        'Shift': 'Shift',
+        'Control': 'Control',
+        'Alt': 'Alt',
+        'Meta': 'Meta',
+        'Home': 'Home',
+        'End': 'End',
+        'PageUp': 'PageUp',
+        'PageDown': 'PageDown',
+      };
+      return map[key] || (key.length === 1 ? key : null);
+    }
+
+    async function sendInput(event) {
+      try {
+        await invoke('iroh_client_send_input', { event });
+      } catch (e) {
+        // Silently ignore — input errors shouldn't disrupt the stream
+        console.warn('input send failed:', e);
+      }
+    }
+
+    // Mouse events on canvas
+    canvas.addEventListener('mousemove', (e) => {
+      if (!controlMode) return;
+      const { x, y } = scaleCoords(e.clientX, e.clientY);
+      sendInput({ t: 'mm', x, y });
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+      if (!controlMode) return;
+      e.preventDefault();
+      const btn = e.button === 2 ? 2 : (e.button === 1 ? 3 : 1);
+      sendInput({ t: 'md', b: btn });
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+      if (!controlMode) return;
+      e.preventDefault();
+      const btn = e.button === 2 ? 2 : (e.button === 1 ? 3 : 1);
+      sendInput({ t: 'mu', b: btn });
+    });
+
+    canvas.addEventListener('contextmenu', (e) => {
+      if (!controlMode) return;
+      e.preventDefault();
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+      if (!controlMode) return;
+      e.preventDefault();
+      sendInput({ t: 'ms', dx: Math.round(e.deltaX), dy: Math.round(e.deltaY) });
+    }, { passive: false });
+
+    // Keyboard events — capture on window when control mode is active
+    window.addEventListener('keydown', (e) => {
+      if (!controlMode) return;
+      e.preventDefault();
+      const k = mapKey(e);
+      if (k) sendInput({ t: 'kd', k });
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (!controlMode) return;
+      e.preventDefault();
+      const k = mapKey(e);
+      if (k) sendInput({ t: 'ku', k });
+    });
+
+    // Text input for printable characters
+    window.addEventListener('keypress', (e) => {
+      if (!controlMode) return;
+      if (e.key.length === 1) {
+        e.preventDefault();
+        sendInput({ t: 'tx', s: e.key });
+      }
     });
   </script>
 </body>
