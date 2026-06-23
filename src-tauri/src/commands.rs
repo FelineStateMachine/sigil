@@ -305,6 +305,7 @@ pub struct AppState {
     pub host_endpoint: TokioMutex<Option<Endpoint>>,
     pub input_send: TokioMutex<Option<tokio::sync::mpsc::UnboundedSender<InputEvent>>>,
     pub client_endpoint: TokioMutex<Option<Endpoint>>,
+    pub webcodecs: std::sync::atomic::AtomicBool,
     pub daemon: bool,
 }
 
@@ -321,6 +322,7 @@ impl Default for AppState {
             host_endpoint: TokioMutex::new(None),
             input_send: TokioMutex::new(None),
             client_endpoint: TokioMutex::new(None),
+            webcodecs: std::sync::atomic::AtomicBool::new(false),
             daemon,
         }
     }
@@ -471,6 +473,16 @@ pub fn titan_derive_identity(pin: String) -> TitanIdentity {
 #[tauri::command]
 pub fn is_daemon_mode(state: State<'_, AppState>) -> bool {
     state.daemon
+}
+
+#[tauri::command]
+pub fn set_webcodecs_available(state: State<'_, AppState>, available: bool) {
+    state.webcodecs.store(available, Ordering::SeqCst);
+}
+
+#[tauri::command]
+pub fn is_webcodecs_available(state: State<'_, AppState>) -> bool {
+    state.webcodecs.load(Ordering::SeqCst)
 }
 
 // ─── Host Registration (keyring) ─────────────────────────────────────────────

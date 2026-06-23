@@ -14,6 +14,8 @@ fn main() {
             commands::fido_pin_retries,
             commands::titan_derive_identity,
             commands::is_daemon_mode,
+            commands::set_webcodecs_available,
+            commands::is_webcodecs_available,
             commands::host_registration_status,
             commands::titan_register_host,
             commands::host_unregister,
