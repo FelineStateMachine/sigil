@@ -20,6 +20,7 @@ use ctap_hid_fido2::fidokey::{
     get_assertion::get_assertion_params::Assertion,
     make_credential::Extension as Mext,
 };
+use ctap_hid_fido2::public_key_credential_user_entity::PublicKeyCredentialUserEntity;
 use ctap_hid_fido2::{verifier, Cfg, FidoKeyHidFactory};
 use iroh::{Endpoint, SecretKey, endpoint::presets};
 use iroh::endpoint::Connection;
@@ -98,9 +99,17 @@ fn derive_secret_from_titan() -> Result<[u8; 32]> {
     // Step 2: Create a resident credential with hmac-secret
     eprintln!("[titan] make_credential (TAP TITAN when it blinks)");
 
+    let user_entity = PublicKeyCredentialUserEntity::new(
+        Some(b"keyhome-user"),
+        Some("keyhome"),
+        Some("Keyhome"),
+    );
+
     let challenge = verifier::create_challenge();
     let make_args = MakeCredentialArgsBuilder::new(RPID, &challenge)
         .pin(&pin)
+        .user_entity(&user_entity)
+        .resident_key()
         .extensions(&[Mext::HmacSecret(Some(true))])
         .build();
 
