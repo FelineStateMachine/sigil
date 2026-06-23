@@ -1,18 +1,23 @@
 //! Spike 007: No-copy/paste — derive Iroh identity from Titan key
 //!
 //! Both host and client derive the SAME Iroh SecretKey from the Titan's
-//! hmac-secret extension. The host uses it as its endpoint identity.
-//! The client derives it only to compute the host's node ID, then dials
-//! via the N0 relay — no address JSON exchanged.
+//! hmac-secret extension. Uses resident keys (discoverable credentials)
+//! so the credential persists on the Titan — no credential ID needs to
+//! be shared between machines.
+//!
+//! First run on a Titan: creates a resident credential.
+//! Subsequent runs: reuses the existing credential via get_assertion
+//! without specifying a credential ID.
 //!
 //! Usage:
-//!   cargo run -- host    # Tap Titan twice, starts hosting
-//!   cargo run -- client  # Tap Titan twice, auto-connects to host
+//!   cargo run -- host    # Tap Titan, starts hosting
+//!   cargo run -- client  # Tap Titan, auto-connects to host
 
 use anyhow::{bail, Context, Result};
 use ctap_hid_fido2::fidokey::{
     GetAssertionArgsBuilder, MakeCredentialArgsBuilder,
     get_assertion::Extension as Gext,
+    get_assertion::get_assertion_params::Assertion,
     make_credential::Extension as Mext,
 };
 use ctap_hid_fido2::{verifier, Cfg, FidoKeyHidFactory};
@@ -22,7 +27,6 @@ use iroh::protocol::{ProtocolHandler, Router};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const ALPN: &[u8] = b"keyhome/titan-probe/0";
 const RPID: &str = "keyhome";
@@ -48,6 +52,11 @@ fn read_pin() -> Result<String> {
 }
 
 /// Derive a 32-byte secret from the Titan using hmac-secret extension.
+///
+/// Strategy: try get_assertion WITHOUT a credential ID first (uses resident key).
+/// If that fails (no credential exists yet), create a resident credential,
+/// then get_assertion with it.
+///
 /// Same Titan + same PIN + same salt = same 32 bytes every time.
 fn derive_secret_from_titan() -> Result<[u8; 32]> {
     let pin = read_pin()?;
@@ -58,8 +67,36 @@ fn derive_secret_from_titan() -> Result<[u8; 32]> {
 
     eprintln!("[titan] FIDO2 device opened");
 
-    // Step 1: Create credential with hmac-secret extension
-    eprintln!("[titan] Step 1: make_credential (TAP TITAN when it blinks)");
+    let salt: [u8; 32] = {
+        let mut hasher = Sha256::new();
+        hasher.update(SALT_MESSAGE.as_bytes());
+        let result = hasher.finalize();
+        let mut s = [0u8; 32];
+        s.copy_from_slice(&result);
+        s
+    };
+
+    // Step 1: Try get_assertion WITHOUT credential ID (uses resident key)
+    eprintln!("[titan] Trying get_assertion with resident key (TAP TITAN when it blinks)");
+
+    let challenge = verifier::create_challenge();
+    let get_args = GetAssertionArgsBuilder::new(RPID, &challenge)
+        .pin(&pin)
+        .extensions(&[Gext::HmacSecret(Some(salt))])
+        .build();
+
+    match device.get_assertion_with_args(&get_args) {
+        Ok(assertions) => {
+            eprintln!("[titan] resident key found, assertion received");
+            return extract_hmac_secret(&assertions);
+        }
+        Err(e) => {
+            eprintln!("[titan] no resident key found ({}), creating one...", e);
+        }
+    }
+
+    // Step 2: Create a resident credential with hmac-secret
+    eprintln!("[titan] make_credential (TAP TITAN when it blinks)");
 
     let challenge = verifier::create_challenge();
     let make_args = MakeCredentialArgsBuilder::new(RPID, &challenge)
@@ -76,19 +113,10 @@ fn derive_secret_from_titan() -> Result<[u8; 32]> {
         bail!("Attestation verification failed");
     }
     let credential_id = verify_result.credential_id;
-    eprintln!("[titan] credential registered, id_len={}", credential_id.len());
+    eprintln!("[titan] credential created, id_len={}", credential_id.len());
 
-    // Step 2: Get assertion with hmac-secret to derive the secret
-    eprintln!("[titan] Step 2: get_assertion (TAP TITAN when it blinks)");
-
-    let salt: [u8; 32] = {
-        let mut hasher = Sha256::new();
-        hasher.update(SALT_MESSAGE.as_bytes());
-        let result = hasher.finalize();
-        let mut s = [0u8; 32];
-        s.copy_from_slice(&result);
-        s
-    };
+    // Step 3: Get assertion with the new credential
+    eprintln!("[titan] get_assertion (TAP TITAN when it blinks)");
 
     let challenge2 = verifier::create_challenge();
     let get_args = GetAssertionArgsBuilder::new(RPID, &challenge2)
@@ -101,17 +129,19 @@ fn derive_secret_from_titan() -> Result<[u8; 32]> {
         .get_assertion_with_args(&get_args)
         .context("get_assertion failed")?;
 
-    // Extract hmac-secret output (32 bytes)
+    extract_hmac_secret(&assertions)
+}
+
+fn extract_hmac_secret(assertions: &[Assertion]) -> Result<[u8; 32]> {
     for ext in &assertions[0].extensions {
         if let Gext::HmacSecret(Some(output)) = ext {
             let mut secret = [0u8; 32];
-            secret.copy_from_slice(output);
+            secret.copy_from_slice(&output[..]);
             eprintln!("[titan] derived 32-byte secret from hmac-secret");
             return Ok(secret);
         }
     }
-
-    bail!("No hmac-secret in assertion response");
+    bail!("No hmac-secret in assertion response")
 }
 
 /// Derive an Iroh SecretKey from the Titan.
@@ -180,7 +210,6 @@ async fn client() -> Result<()> {
     eprintln!("[client] Deriving host identity from Titan...");
     let host_secret = derive_iroh_secret_from_titan()?;
 
-    // The host's node ID is derived from the same Titan
     let host_node_id = host_secret.public();
     println!("[client] derived host node ID: {}", host_node_id);
 
@@ -196,8 +225,7 @@ async fn client() -> Result<()> {
 
     let _ = tokio::time::timeout(Duration::from_secs(10), endpoint.online()).await;
 
-    // Construct an EndpointAddr with just the node ID + N0 relay
-    // No address JSON needed — relay routes by node ID
+    // Connect using just the node ID + N0 relay — no address JSON
     let addr = iroh::EndpointAddr::new(host_node_id)
         .with_relay_url("https://usw1-1.relay.n0.iroh.link./".parse()
             .context("invalid relay URL")?);
