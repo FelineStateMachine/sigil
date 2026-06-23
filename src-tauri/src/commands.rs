@@ -957,8 +957,7 @@ pub async fn iroh_client_connect(
                 break;
             }
 
-            // Decode H.264 → YUV → RGB8 → JPEG
-            // Split into individual NAL units — decoder needs them separately
+            // Decode H.264 → YUV → RGB8 → RGBA → base64 (no JPEG re-encode)
             for nal in nal_units(&h264_buf) {
                 match decoder.decode(nal) {
                     Ok(Some(yuv)) => {
@@ -967,25 +966,25 @@ pub async fn iroh_client_connect(
                         let mut rgb_raw = vec![0u8; rgb_len];
                         yuv.write_rgb8(&mut rgb_raw);
 
-                        // Re-encode as JPEG for canvas
-                        let img = image::RgbImage::from_raw(yw as u32, yh as u32, rgb_raw);
-                        if let Some(img) = img {
-                            let mut jpeg_buf = Vec::with_capacity(30_000);
-                            if image::DynamicImage::ImageRgb8(img)
-                                .write_to(&mut Cursor::new(&mut jpeg_buf), image::ImageFormat::Jpeg)
-                                .is_ok()
-                            {
-                                let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg_buf);
-                                let _ = app.emit(
-                                    "frame",
-                                    FramePayload {
-                                        width: yw as u32,
-                                        height: yh as u32,
-                                        data: b64,
-                                    },
-                                );
-                            }
+                        // Expand RGB8 → RGBA for ImageData
+                        let mut rgba_raw = vec![0u8; yw * yh * 4];
+                        let npix = yw * yh;
+                        for i in 0..npix {
+                            rgba_raw[i * 4]     = rgb_raw[i * 3];
+                            rgba_raw[i * 4 + 1] = rgb_raw[i * 3 + 1];
+                            rgba_raw[i * 4 + 2] = rgb_raw[i * 3 + 2];
+                            rgba_raw[i * 4 + 3] = 255;
                         }
+
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&rgba_raw);
+                        let _ = app.emit(
+                            "frame",
+                            FramePayload {
+                                width: yw as u32,
+                                height: yh as u32,
+                                data: b64,
+                            },
+                        );
 
                         frame_count += 1;
                         let elapsed = start.elapsed();
@@ -995,9 +994,7 @@ pub async fn iroh_client_connect(
                             serde_json::json!({ "fps": fps, "count": frame_count }),
                         );
                     }
-                    Ok(None) => {
-                        // Need more NALs — SPS/PPS or waiting for I-frame
-                    }
+                    Ok(None) => {}
                     Err(e) => {
                         eprintln!("[client] decode error: {}", e);
                     }
