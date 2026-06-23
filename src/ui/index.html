@@ -372,6 +372,15 @@
   </style>
 </head>
 <body>
+  <!-- Titan tap overlay -->
+  <div class="setup hidden" id="tap-overlay" style="z-index: 200;">
+    <div class="setup-content">
+      <h1>tap titan</h1>
+      <p>Touch the sensor on your key when it blinks.</p>
+      <div class="setup-status pending" id="tap-status">waiting...</div>
+    </div>
+  </div>
+
   <!-- Intro screen (adaptive — shows both workflows) -->
   <div class="setup hidden" id="setup">
     <div class="setup-content">
@@ -387,7 +396,7 @@
           <button class="setup-btn" id="setup-btn" onclick="setupRegister()">register</button>
           <button class="setup-btn" onclick="introConnect()">connect</button>
         </div>
-        <div class="setup-status" id="setup-status">tap titan when it blinks</div>
+        <div class="setup-status" id="setup-status"></div>
       </div>
 
       <!-- Registered: host or connect -->
@@ -401,7 +410,7 @@
         <div style="display: flex; gap: 16px; justify-content: center; margin-top: 12px;">
           <button class="setup-btn" onclick="introConnectRegistered()">connect</button>
         </div>
-        <div class="setup-status" id="setup-status-reg">tap titan when it blinks</div>
+        <div class="setup-status" id="setup-status-reg"></div>
       </div>
     </div>
   </div>
@@ -524,6 +533,14 @@
       }
     }
 
+    // ─── Tap overlay ───────────────────────────────────────────────────
+    function showTap() {
+      document.getElementById('tap-overlay').classList.remove('hidden');
+    }
+    function hideTap() {
+      document.getElementById('tap-overlay').classList.add('hidden');
+    }
+
     // ─── Intro actions ─────────────────────────────────────────────────
     function hideIntro() {
       document.getElementById('setup').classList.add('hidden');
@@ -538,8 +555,10 @@
         return;
       }
       hideIntro();
+      showTap();
       document.getElementById('pin-input').value = pin;
       await connectHost();
+      hideTap();
     }
 
     async function introConnectRegistered() {
@@ -551,8 +570,10 @@
         return;
       }
       hideIntro();
+      showTap();
       document.getElementById('pin-input').value = pin;
       await connectHost();
+      hideTap();
     }
 
     async function introHost() {
@@ -567,30 +588,30 @@
       const status = document.getElementById('setup-status');
       if (!pin) {
         status.className = 'setup-status err';
-        status.textContent = 'enter PIN';
+        status.textContent = 'enter pin';
         return;
       }
       btn.disabled = true;
-      status.className = 'setup-status pending';
-      status.textContent = 'tap titan...';
+      hideIntro();
+      showTap();
       try {
         const result = await invoke('titan_register_host', { pin });
         if (result.registered) {
-          status.className = 'setup-status ok';
-          status.textContent = 'registered';
-          setTimeout(() => {
-            document.getElementById('setup').classList.add('hidden');
-            document.getElementById('node-id-text').textContent =
-              result.node_id.substring(0, 16) + '...';
-            registered = true;
-            checkRegistration();
-          }, 600);
+          hideTap();
+          registered = true;
+          document.getElementById('node-id-text').textContent =
+            result.node_id.substring(0, 16) + '...';
+          checkRegistration();
         } else {
+          hideTap();
+          document.getElementById('setup').classList.remove('hidden');
           status.className = 'setup-status err';
           status.textContent = 'failed';
           btn.disabled = false;
         }
       } catch (e) {
+        hideTap();
+        document.getElementById('setup').classList.remove('hidden');
         status.className = 'setup-status err';
         status.textContent = 'error: ' + e;
         btn.disabled = false;
