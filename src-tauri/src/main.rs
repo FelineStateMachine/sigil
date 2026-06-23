@@ -12,6 +12,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::fido_device_info,
             commands::fido_pin_retries,
+            commands::titan_derive_identity,
             commands::iroh_host_start,
             commands::iroh_host_status,
             commands::iroh_client_connect,

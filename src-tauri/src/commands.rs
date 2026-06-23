@@ -3,19 +3,28 @@
 //! Commands:
 //! - fido_device_info: enumerate FIDO2 devices and get info
 //! - fido_pin_retries: check PIN retry count
-//! - iroh_host_start: start Iroh endpoint, stream screen frames + accept input
+//! - titan_derive_identity: derive Iroh node ID from Titan (no network)
+//! - iroh_host_start: derive identity from Titan, start hosting (frames + input)
 //! - iroh_host_status: check if host endpoint is running
-//! - iroh_client_connect: connect to host, receive frames, emit events
+//! - iroh_client_connect: derive host ID from Titan, connect via relay (no address)
 //! - iroh_client_send_input: send input event to host for injection
 
 use anyhow::Context as _;
 use base64::Engine;
-use ctap_hid_fido2::{Cfg, FidoKeyHidFactory};
+use ctap_hid_fido2::fidokey::{
+    GetAssertionArgsBuilder, MakeCredentialArgsBuilder,
+    get_assertion::Extension as Gext,
+    get_assertion::get_assertion_params::Assertion,
+    make_credential::Extension as Mext,
+};
+use ctap_hid_fido2::public_key_credential_user_entity::PublicKeyCredentialUserEntity;
+use ctap_hid_fido2::{verifier, Cfg, FidoKeyHidFactory};
 use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use iroh::endpoint::{presets, Connection};
 use iroh::protocol::{ProtocolHandler, Router};
-use iroh::{Endpoint, EndpointAddr, SecretKey};
+use iroh::{Endpoint, SecretKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -24,6 +33,93 @@ use tokio::sync::Mutex as TokioMutex;
 
 const FRAME_ALPN: &[u8] = b"keyhome/frame-stream/0";
 const INPUT_ALPN: &[u8] = b"keyhome/input-stream/0";
+const RPID: &str = "keyhome";
+const SALT_MESSAGE: &str = "keyhome-iroh-identity-v1";
+const N0_RELAY: &str = "https://usw1-1.relay.n0.iroh.link./";
+
+// ─── Titan HMAC-Secret Derivation ────────────────────────────────────────────
+
+fn derive_secret_from_titan(pin: &str) -> anyhow::Result<[u8; 32]> {
+    let cfg = Cfg::init();
+    let device = FidoKeyHidFactory::create(&cfg)
+        .context("Failed to open FIDO2 device")?;
+
+    let salt: [u8; 32] = {
+        let mut hasher = Sha256::new();
+        hasher.update(SALT_MESSAGE.as_bytes());
+        let result = hasher.finalize();
+        let mut s = [0u8; 32];
+        s.copy_from_slice(&result);
+        s
+    };
+
+    // Try get_assertion without credential ID (uses resident key)
+    let challenge = verifier::create_challenge();
+    let get_args = GetAssertionArgsBuilder::new(RPID, &challenge)
+        .pin(pin)
+        .extensions(&[Gext::HmacSecret(Some(salt))])
+        .build();
+
+    match device.get_assertion_with_args(&get_args) {
+        Ok(assertions) => {
+            return extract_hmac_secret(&assertions);
+        }
+        Err(_) => {}
+    }
+
+    // No resident key — create one
+    let user_entity = PublicKeyCredentialUserEntity::new(
+        Some(b"keyhome-user"),
+        Some("keyhome"),
+        Some("Keyhome"),
+    );
+
+    let challenge = verifier::create_challenge();
+    let make_args = MakeCredentialArgsBuilder::new(RPID, &challenge)
+        .pin(pin)
+        .user_entity(&user_entity)
+        .resident_key()
+        .extensions(&[Mext::HmacSecret(Some(true))])
+        .build();
+
+    let attestation = device.make_credential_with_args(&make_args)
+        .context("make_credential failed")?;
+
+    let verify_result = verifier::verify_attestation(RPID, &challenge, &attestation);
+    if !verify_result.is_success {
+        anyhow::bail!("Attestation verification failed");
+    }
+    let credential_id = verify_result.credential_id;
+
+    // Get assertion with the new credential
+    let challenge2 = verifier::create_challenge();
+    let get_args = GetAssertionArgsBuilder::new(RPID, &challenge2)
+        .pin(pin)
+        .credential_id(&credential_id)
+        .extensions(&[Gext::HmacSecret(Some(salt))])
+        .build();
+
+    let assertions = device.get_assertion_with_args(&get_args)
+        .context("get_assertion failed")?;
+
+    extract_hmac_secret(&assertions)
+}
+
+fn extract_hmac_secret(assertions: &[Assertion]) -> anyhow::Result<[u8; 32]> {
+    for ext in &assertions[0].extensions {
+        if let Gext::HmacSecret(Some(output)) = ext {
+            let mut secret = [0u8; 32];
+            secret.copy_from_slice(&output[..]);
+            return Ok(secret);
+        }
+    }
+    anyhow::bail!("No hmac-secret in assertion response")
+}
+
+fn derive_iroh_secret_from_titan(pin: &str) -> anyhow::Result<SecretKey> {
+    let secret_bytes = derive_secret_from_titan(pin)?;
+    Ok(SecretKey::from_bytes(&secret_bytes))
+}
 
 // ─── Input Event Protocol ───────────────────────────────────────────────────
 
@@ -166,7 +262,7 @@ pub struct AppState {
 }
 
 pub struct HostState {
-    pub addr_json: String,
+    pub node_id: String,
 }
 
 impl Default for AppState {
@@ -296,18 +392,47 @@ pub fn fido_pin_retries() -> PinRetries {
     }
 }
 
+// ─── Titan Identity Derivation ───────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct TitanIdentity {
+    pub node_id: String,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub fn titan_derive_identity(pin: String) -> TitanIdentity {
+    match derive_iroh_secret_from_titan(&pin) {
+        Ok(secret) => TitanIdentity {
+            node_id: secret.public().to_string(),
+            error: None,
+        },
+        Err(e) => TitanIdentity {
+            node_id: String::new(),
+            error: Some(format!("{:?}", e)),
+        },
+    }
+}
+
 // ─── Iroh Host ───────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
 pub struct HostStatus {
     pub running: bool,
-    pub addr_json: Option<String>,
+    pub node_id: Option<String>,
     pub error: Option<String>,
 }
 
 #[tauri::command]
-pub async fn iroh_host_start(state: State<'_, AppState>) -> Result<HostStatus, String> {
-    let secret = SecretKey::generate();
+pub async fn iroh_host_start(state: State<'_, AppState>, pin: String) -> Result<HostStatus, String> {
+    // Derive identity from Titan (blocking — runs in Tauri's async pool)
+    let secret = tokio::task::spawn_blocking(move || derive_iroh_secret_from_titan(&pin))
+        .await
+        .map_err(|e| format!("Titan derivation task failed: {}", e))?
+        .map_err(|e| format!("Titan derivation failed: {:?}", e))?;
+
+    let node_id = secret.public().to_string();
+
     let endpoint = Endpoint::builder(presets::N0)
         .secret_key(secret)
         .bind()
@@ -316,13 +441,7 @@ pub async fn iroh_host_start(state: State<'_, AppState>) -> Result<HostStatus, S
 
     let _ = tokio::time::timeout(Duration::from_secs(5), endpoint.online()).await;
 
-    let addr = endpoint.addr();
-    let addr_json =
-        serde_json::to_string(&addr).map_err(|e| format!("Failed to serialize addr: {}", e))?;
-
-    // Frame stream handler (existing)
     let frame_handler = Arc::new(FrameStreamHandler);
-    // Input handler (new)
     let input_handler = Arc::new(InputStreamHandler);
 
     let router = Router::builder(endpoint.clone())
@@ -330,18 +449,17 @@ pub async fn iroh_host_start(state: State<'_, AppState>) -> Result<HostStatus, S
         .accept(INPUT_ALPN, input_handler)
         .spawn();
 
-    // Keep endpoint and router alive by leaking — MVP tradeoff
     std::mem::forget(endpoint);
     std::mem::forget(router);
 
     let mut host = state.host.lock().map_err(|e| format!("Lock error: {}", e))?;
     *host = Some(HostState {
-        addr_json: addr_json.clone(),
+        node_id: node_id.clone(),
     });
 
     Ok(HostStatus {
         running: true,
-        addr_json: Some(addr_json),
+        node_id: Some(node_id),
         error: None,
     })
 }
@@ -353,18 +471,18 @@ pub fn iroh_host_status(state: State<'_, AppState>) -> HostStatus {
         Some(h) => match &*h {
             Some(hs) => HostStatus {
                 running: true,
-                addr_json: Some(hs.addr_json.clone()),
+                node_id: Some(hs.node_id.clone()),
                 error: None,
             },
             None => HostStatus {
                 running: false,
-                addr_json: None,
+                node_id: None,
                 error: None,
             },
         },
         None => HostStatus {
             running: false,
-            addr_json: None,
+            node_id: None,
             error: Some("State lock poisoned".into()),
         },
     }
@@ -387,14 +505,12 @@ impl ProtocolHandler for FrameStreamHandler {
 async fn stream_frames(conn: Connection) -> anyhow::Result<()> {
     let (mut send, mut recv) = conn.accept_bi().await?;
 
-    // Wait for client start signal
     let mut start_buf = [0u8; 1];
     recv.read_exact(&mut start_buf).await?;
     if start_buf[0] != 1 {
         return Ok(());
     }
 
-    // Capture screen
     let monitors = xcap::Monitor::all().context("failed to enumerate monitors")?;
     let monitor = monitors
         .into_iter()
@@ -431,7 +547,6 @@ async fn stream_frames(conn: Connection) -> anyhow::Result<()> {
             frame_count, w, h, jpeg_size, fps
         );
 
-        // Check for client disconnect
         match tokio::time::timeout(Duration::from_millis(1), recv.read(&mut [0u8; 1])).await {
             Ok(Ok(Some(_))) => {
                 eprintln!("[host] client disconnected");
@@ -464,15 +579,12 @@ async fn handle_input(conn: Connection) -> anyhow::Result<()> {
     let (mut send, mut recv) = conn.accept_bi().await?;
     eprintln!("[host] input client connected: {}", conn.remote_id());
 
-    // Wait for start signal
     let mut start_buf = [0u8; 1];
     recv.read_exact(&mut start_buf).await?;
     if start_buf[0] != 1 {
         return Ok(());
     }
 
-    // Enigo is not Send on macOS (holds NonNull<CGEventSource>).
-    // Run it in a dedicated blocking thread, fed via a std channel.
     let (tx, rx) = std::sync::mpsc::channel::<InputEvent>();
     std::thread::spawn(move || {
         let mut enigo = match Enigo::new(&Settings::default()) {
@@ -511,7 +623,6 @@ async fn handle_input(conn: Connection) -> anyhow::Result<()> {
 
         buf.extend_from_slice(&chunk[..n]);
 
-        // Process complete newline-delimited JSON events
         while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = buf.drain(..=pos).collect();
             let line_str = String::from_utf8_lossy(&line[..line.len() - 1]);
@@ -531,7 +642,6 @@ async fn handle_input(conn: Connection) -> anyhow::Result<()> {
         }
     }
 
-    // Drop tx to signal the blocking thread to exit
     drop(tx);
     let _ = send.write_all(b"bye\n").await;
     Ok(())
@@ -543,12 +653,13 @@ async fn handle_input(conn: Connection) -> anyhow::Result<()> {
 pub struct FramePayload {
     pub width: u32,
     pub height: u32,
-    pub data: String, // base64 JPEG
+    pub data: String,
 }
 
 #[derive(Serialize)]
 pub struct ConnectResult {
     pub connected: bool,
+    pub host_node_id: Option<String>,
     pub error: Option<String>,
 }
 
@@ -556,19 +667,29 @@ pub struct ConnectResult {
 pub async fn iroh_client_connect(
     app: AppHandle,
     state: State<'_, AppState>,
-    addr_json: String,
+    pin: String,
 ) -> Result<ConnectResult, String> {
-    let addr: EndpointAddr = serde_json::from_str(&addr_json)
-        .map_err(|e| format!("Invalid address: {}", e))?;
+    // Derive the HOST's node ID from the Titan (same key = same node ID)
+    let host_secret = tokio::task::spawn_blocking(move || derive_iroh_secret_from_titan(&pin))
+        .await
+        .map_err(|e| format!("Titan derivation task failed: {}", e))?
+        .map_err(|e| format!("Titan derivation failed: {:?}", e))?;
 
-    let secret = SecretKey::generate();
+    let host_node_id = host_secret.public();
+
+    // Client uses a random identity (can't connect to yourself)
+    let client_secret = SecretKey::generate();
     let endpoint = Endpoint::builder(presets::N0)
-        .secret_key(secret)
+        .secret_key(client_secret)
         .bind()
         .await
         .map_err(|e| format!("Failed to bind endpoint: {}", e))?;
 
     let _ = tokio::time::timeout(Duration::from_secs(10), endpoint.online()).await;
+
+    // Connect via relay using only the derived node ID — no address JSON
+    let addr = iroh::EndpointAddr::new(host_node_id)
+        .with_relay_url(N0_RELAY.parse().map_err(|e| format!("Invalid relay URL: {}", e))?);
 
     // Connect frame stream
     let frame_conn = endpoint
@@ -581,7 +702,6 @@ pub async fn iroh_client_connect(
         .await
         .map_err(|e| format!("Failed to open frame stream: {}", e))?;
 
-    // Send start signal
     frame_send
         .write_all(&[1u8])
         .await
@@ -598,7 +718,6 @@ pub async fn iroh_client_connect(
         .await
         .map_err(|e| format!("Failed to open input stream: {}", e))?;
 
-    // Send start signal for input
     input_send
         .write_all(&[1u8])
         .await
@@ -611,7 +730,7 @@ pub async fn iroh_client_connect(
         *input_send_guard = Some(tx);
     }
 
-    // Spawn input forwarder: reads from channel, writes to Iroh stream
+    // Spawn input forwarder
     let mut input_stream = input_send;
     tokio::spawn(async move {
         let mut rx = rx;
@@ -631,7 +750,7 @@ pub async fn iroh_client_connect(
         let _ = input_stream.finish();
     });
 
-    // Spawn background task to read frames and emit events
+    // Spawn frame reader
     tokio::spawn(async move {
         let mut frame_count = 0u32;
         let start = Instant::now();
@@ -678,6 +797,7 @@ pub async fn iroh_client_connect(
 
     Ok(ConnectResult {
         connected: true,
+        host_node_id: Some(host_node_id.to_string()),
         error: None,
     })
 }
