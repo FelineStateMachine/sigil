@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.sigil.app",
   "build": {
-    "frontendDist": "../src/ui"
+    "frontendDist": "../src"
   },
   "app": {
     "windows": [

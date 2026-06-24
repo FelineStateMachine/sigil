@@ -18,7 +18,7 @@ Active work areas:
 ## Key files
 
 - `src-tauri/src/commands.rs` — all backend logic (FIDO2 key derivation, Iroh networking, screen capture, H.264 encoding, input injection)
-- `src/ui/index.html` — the entire frontend (single-file UI)
+- `src/index.html` — the entire frontend (single-file UI)
 
 ## Tech notes
 
