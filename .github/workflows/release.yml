@@ -52,7 +52,8 @@ jobs:
             libxext-dev \
             libxinerama-dev \
             libpipewire-0.3-dev \
-            libxdo-dev
+            libxdo-dev \
+            libgbm-dev
 
       - uses: tauri-apps/tauri-action@v0
         env:

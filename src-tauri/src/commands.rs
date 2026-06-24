@@ -1231,35 +1231,57 @@ async fn stream_frames_xcap(
     recv: &mut iroh::endpoint::RecvStream,
     app: &AppHandle,
 ) -> anyhow::Result<()> {
-    let monitors = xcap::Monitor::all().context("failed to enumerate monitors")?;
-    let monitor = monitors
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("no monitors found"))?;
+    use std::sync::mpsc;
 
-    let mut encoder = Encoder::new().context("failed to create H.264 encoder")?;
+    // xcap::Monitor and openh264::Encoder are !Send, so run them on a dedicated thread
+    let (tx, rx) = mpsc::channel::<anyhow::Result<(usize, usize, Vec<u8>, bool, f64, f64)>>();
+
+    let capture_thread = std::thread::spawn(move || -> anyhow::Result<()> {
+        let monitors = xcap::Monitor::all().context("failed to enumerate monitors")?;
+        let monitor = monitors
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("no monitors found"))?;
+        let mut encoder = Encoder::new().context("failed to create H.264 encoder")?;
+
+        loop {
+            if tx.send(Ok({
+                let capture_start = Instant::now();
+                let image = monitor.capture_image()?;
+                let capture_ms = capture_start.elapsed().as_secs_f64() * 1000.0;
+
+                let rgb_image = image::DynamicImage::ImageRgba8(image).to_rgb8();
+                let (w, h) = (rgb_image.width() as usize, rgb_image.height() as usize);
+
+                let encode_start = Instant::now();
+                let rgb_source = RgbSliceU8::new(rgb_image.as_raw(), (w, h));
+                let yuv = YUVBuffer::from_rgb8_source(rgb_source);
+                let (h264_data, is_keyframe) = {
+                    let bitstream = encoder.encode(&yuv).context("H.264 encode failed")?;
+                    let kf = matches!(bitstream.frame_type(), openh264::encoder::FrameType::I | openh264::encoder::FrameType::IDR);
+                    (bitstream.to_vec(), kf)
+                };
+                let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+                (w, h, h264_data, is_keyframe, capture_ms, encode_ms)
+            })).is_err() {
+                break; // receiver dropped — stop
+            }
+        }
+        Ok(())
+    });
 
     let mut frame_count = 0u32;
     let start = Instant::now();
 
     loop {
-        let capture_start = Instant::now();
-        let image = monitor.capture_image()?;
-        let capture_ms = capture_start.elapsed().as_secs_f64() * 1000.0;
-
-        let rgb_image = image::DynamicImage::ImageRgba8(image).to_rgb8();
-        let (w, h) = (rgb_image.width() as usize, rgb_image.height() as usize);
-
-        // RGB8 → YUV → H.264
-        let encode_start = Instant::now();
-        let rgb_source = RgbSliceU8::new(rgb_image.as_raw(), (w, h));
-        let yuv = YUVBuffer::from_rgb8_source(rgb_source);
-        let (h264_data, is_keyframe) = {
-            let bitstream = encoder.encode(&yuv).context("H.264 encode failed")?;
-            let kf = matches!(bitstream.frame_type(), openh264::encoder::FrameType::I | openh264::encoder::FrameType::IDR);
-            (bitstream.to_vec(), kf)
+        let (w, h, h264_data, is_keyframe, capture_ms, encode_ms) = match rx.recv() {
+            Ok(Ok(frame)) => frame,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                eprintln!("[host] capture thread ended");
+                break;
+            }
         };
-        let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
         let h264_size = h264_data.len();
 
         // Header: width(4) + height(4) + size(4) + keyframe(1) + codec(1) = 14 bytes
@@ -1306,6 +1328,9 @@ async fn stream_frames_xcap(
         tokio::task::yield_now().await;
     }
 
+    // Drop rx to signal the capture thread to stop
+    drop(rx);
+    let _ = capture_thread.join();
     Ok(())
 }
 
