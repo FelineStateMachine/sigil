@@ -765,15 +765,18 @@ async fn stream_frames(conn: Connection, app: &AppHandle) -> anyhow::Result<()> 
         return Ok(());
     }
 
-    // Detect screen dimensions (one-time xcap call)
+    // Detect screen dimensions (one-time xcap call, in spawn_blocking to keep future Send)
     let (w, h) = {
-        let monitors = xcap::Monitor::all().context("failed to enumerate monitors")?;
-        let mon = monitors
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("no monitors found"))?;
-        let img = mon.capture_image()?;
-        (img.width() as usize, img.height() as usize)
+        tokio::task::spawn_blocking(|| -> anyhow::Result<(usize, usize)> {
+            let monitors = xcap::Monitor::all().context("failed to enumerate monitors")?;
+            let mon = monitors
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("no monitors found"))?;
+            let img = mon.capture_image()?;
+            Ok((img.width() as usize, img.height() as usize))
+        })
+        .await??
     };
     eprintln!("[host] screen resolution: {}x{}", w, h);
 
