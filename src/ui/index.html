@@ -414,8 +414,8 @@
   <!-- Tap titan overlay -->
   <div class="overlay-screen hidden" id="tap-overlay" style="z-index: 200;">
     <div class="overlay-content">
-      <h1>tap titan</h1>
-      <p>Touch the sensor on your key when it blinks.</p>
+      <h1 id="tap-overlay-title">tap titan</h1>
+      <p id="tap-overlay-desc">Touch the sensor on your key when it blinks.</p>
       <div class="overlay-status pending" id="tap-status">waiting...</div>
     </div>
   </div>
@@ -424,7 +424,7 @@
   <div class="overlay-screen hidden" id="intro">
     <div class="overlay-content">
       <h1>keyhome</h1>
-      <p id="intro-desc">Type PIN, then c=connect · r=register · h=host</p>
+      <p id="intro-desc">Type PIN</p>
 
       <!-- Unregistered: register or connect -->
       <div id="intro-unregistered">
@@ -622,7 +622,12 @@
       }, 50);
     }
     function hideIntro() { document.getElementById('intro').classList.add('hidden'); }
-    function showTap() { document.getElementById('tap-overlay').classList.remove('hidden'); }
+    function showTap() {
+      document.getElementById('tap-overlay-title').textContent = 'tap titan';
+      document.getElementById('tap-overlay-desc').textContent = 'Touch the sensor on your key when it blinks.';
+      document.getElementById('tap-status').textContent = 'waiting...';
+      document.getElementById('tap-overlay').classList.remove('hidden');
+    }
     function hideTap() { document.getElementById('tap-overlay').classList.add('hidden'); }
 
     // ─── Registration ───────────────────────────────────────────────────
@@ -715,6 +720,11 @@
       document.getElementById('pin-input').value = pin;
       await connectHost();
       hideTap();
+      if (!connected) {
+        showIntro();
+        status.className = 'overlay-status err';
+        status.textContent = 'connection failed';
+      }
     }
 
     async function introConnectReg() {
@@ -730,6 +740,11 @@
       document.getElementById('pin-input').value = pin;
       await connectHost();
       hideTap();
+      if (!connected) {
+        showIntro();
+        status.className = 'overlay-status err';
+        status.textContent = 'connection failed';
+      }
     }
 
     async function introHost() {
@@ -1580,6 +1595,33 @@
         e.preventDefault();
         introHost();
       }
+    });
+
+    // ─── PIN shortcut hints ─────────────────────────────────────────────
+    function updateIntroDes() {
+      const unregVisible = document.getElementById('intro-unregistered').style.display !== 'none';
+      const pinEl = unregVisible
+        ? document.getElementById('intro-pin-unreg')
+        : document.getElementById('intro-pin-reg');
+      const desc = document.getElementById('intro-desc');
+      if (!pinEl || !pinEl.value.trim()) {
+        desc.textContent = 'Type PIN';
+        return;
+      }
+      if (unregVisible) {
+        desc.innerHTML = 'Type PIN · <u>c</u>=connect · <u>r</u>=register';
+      } else {
+        desc.innerHTML = 'Type PIN · <u>c</u>=connect · <u>h</u>=host';
+      }
+    }
+    document.getElementById('intro-pin-unreg').addEventListener('input', updateIntroDes);
+    document.getElementById('intro-pin-reg').addEventListener('input', updateIntroDes);
+
+    // ─── Fido done — key tapped, now waiting for relay ──────────────────
+    listen('fido-done', () => {
+      document.getElementById('tap-overlay-title').textContent = 'connecting';
+      document.getElementById('tap-overlay-desc').textContent = 'Key recognised. Waiting for host to respond.';
+      document.getElementById('tap-status').textContent = 'please wait...';
     });
 
     // ─── Init ───────────────────────────────────────────────────────────

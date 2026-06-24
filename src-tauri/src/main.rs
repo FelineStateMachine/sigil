@@ -9,25 +9,40 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
         .manage(AppState::default())
+        .setup(|app| {
+            use tauri::Manager;
+            if let Ok(data_dir) = app.path().app_data_dir() {
+                let path = data_dir.join("encoder_config.json");
+                if let Ok(contents) = std::fs::read_to_string(&path) {
+                    if let Ok(config) =
+                        serde_json::from_str::<commands::EncoderConfig>(&contents)
+                    {
+                        let state = app.state::<commands::AppState>();
+                        *state.encoder_config.lock().unwrap() = config;
+                    }
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
-            commands::fido_device_info,
-            commands::fido_pin_retries,
-            commands::titan_derive_identity,
-            commands::is_daemon_mode,
-            commands::set_webcodecs_available,
-            commands::is_webcodecs_available,
-            commands::get_encoder_config,
-            commands::set_encoder_config,
-            commands::detect_available_encoders,
-            commands::host_registration_status,
-            commands::titan_register_host,
-            commands::host_unregister,
-            commands::iroh_host_start,
-            commands::iroh_host_stop,
-            commands::iroh_host_status,
-            commands::iroh_client_connect,
-            commands::iroh_client_disconnect,
-            commands::iroh_client_send_input,
+            commands::auth::fido_device_info,
+            commands::auth::fido_pin_retries,
+            commands::auth::titan_derive_identity,
+            commands::state::is_daemon_mode,
+            commands::state::set_webcodecs_available,
+            commands::state::is_webcodecs_available,
+            commands::streaming::get_encoder_config,
+            commands::streaming::set_encoder_config,
+            commands::streaming::detect_available_encoders,
+            commands::auth::host_registration_status,
+            commands::auth::titan_register_host,
+            commands::auth::host_unregister,
+            commands::network::iroh_host_start,
+            commands::network::iroh_host_stop,
+            commands::network::iroh_host_status,
+            commands::network::iroh_client_connect,
+            commands::network::iroh_client_disconnect,
+            commands::network::iroh_client_send_input,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
