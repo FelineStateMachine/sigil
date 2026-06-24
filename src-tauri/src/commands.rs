@@ -1194,7 +1194,7 @@ async fn stream_frames_ffmpeg(
 
         // Check for client disconnect
         match tokio::time::timeout(Duration::from_millis(1), recv.read(&mut [0u8; 1])).await {
-            Ok(Ok(Some(_))) => {
+            Ok(Ok(Some(_))) | Ok(Err(_)) => {
                 eprintln!("[host] client disconnected");
                 break;
             }
@@ -1278,7 +1278,7 @@ async fn stream_frames_xcap(
         );
 
         match tokio::time::timeout(Duration::from_millis(1), recv.read(&mut [0u8; 1])).await {
-            Ok(Ok(Some(_))) => {
+            Ok(Ok(Some(_))) | Ok(Err(_)) => {
                 eprintln!("[host] client disconnected");
                 break;
             }
