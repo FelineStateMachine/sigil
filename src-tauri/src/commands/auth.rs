@@ -176,23 +176,21 @@ pub fn fido_device_info() -> FidoDeviceInfo {
     let dev = &devices[0];
     let vid = dev.vid;
     let pid = dev.pid;
-    let product = format!("{:?}", dev.info);
+    // product_string is the human-readable name from the HID descriptor
+    let product = if dev.product_string.is_empty() {
+        dev.info.clone()
+    } else {
+        dev.product_string.clone()
+    };
 
+    // Try to open the device and query CTAP info; degrade gracefully if it fails
+    // (device may be busy or need user presence for some operations)
     let cfg = Cfg::init();
     match FidoKeyHidFactory::create(&cfg) {
         Ok(device) => {
-            let info = match device.get_info() {
-                Ok(i) => i,
-                Err(e) => {
-                    return FidoDeviceInfo {
-                        found: true,
-                        vid,
-                        pid,
-                        product,
-                        error: Some(format!("get_info failed: {:?}", e)),
-                        ..Default::default()
-                    };
-                }
+            let (versions, extensions, options, max_msg_size) = match device.get_info() {
+                Ok(i) => (i.versions.clone(), i.extensions.clone(), i.options.clone(), i.max_msg_size as u32),
+                Err(_) => (vec![], vec![], vec![], 0),
             };
             let pin_retries = device.get_pin_retries().unwrap_or(0);
             FidoDeviceInfo {
@@ -200,22 +198,25 @@ pub fn fido_device_info() -> FidoDeviceInfo {
                 vid,
                 pid,
                 product,
-                versions: info.versions.clone(),
-                extensions: info.extensions.clone(),
-                options: info.options.clone(),
-                max_msg_size: info.max_msg_size as u32,
+                versions,
+                extensions,
+                options,
+                max_msg_size,
                 pin_retries: pin_retries as u32,
                 error: None,
             }
         }
-        Err(e) => FidoDeviceInfo {
-            found: true,
-            vid,
-            pid,
-            product,
-            error: Some(format!("Failed to open device: {:?}", e)),
-            ..Default::default()
-        },
+        Err(e) => {
+            // Device was enumerated but couldn't be opened — still report it as found
+            FidoDeviceInfo {
+                found: true,
+                vid,
+                pid,
+                product,
+                error: Some(format!("{:?}", e)),
+                ..Default::default()
+            }
+        }
     }
 }
 

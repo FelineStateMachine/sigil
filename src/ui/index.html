@@ -930,21 +930,23 @@
       try {
         const info = await invoke('fido_device_info');
         const el = document.getElementById('fido-status');
-        if (info.found && !info.error) {
-          el.textContent = 'connected';
-          el.style.color = 'var(--green)';
-          document.getElementById('fido-product').textContent = info.product;
-          document.getElementById('fido-vidpid').textContent =
-            `0x${info.vid.toString(16)}:0x${info.pid.toString(16)}`;
-          document.getElementById('fido-versions').textContent = info.versions.join(', ');
-          document.getElementById('fido-extensions').textContent = info.extensions.join(', ');
-          document.getElementById('fido-pin').textContent = info.pin_retries;
-        } else {
-          el.textContent = info.error || 'no device';
+        if (!info.found) {
+          el.textContent = 'no device';
           el.style.color = 'var(--muted-fg)';
+          return;
         }
+        // Device found — populate basic info regardless of whether CTAP query succeeded
+        el.textContent = info.error ? `found (${info.error})` : 'connected';
+        el.style.color = info.error ? 'var(--yellow)' : 'var(--green)';
+        document.getElementById('fido-product').textContent = info.product || '—';
+        document.getElementById('fido-vidpid').textContent =
+          `${info.vid.toString(16).padStart(4,'0')}:${info.pid.toString(16).padStart(4,'0')}`;
+        document.getElementById('fido-versions').textContent = info.versions.join(', ') || '—';
+        document.getElementById('fido-extensions').textContent = info.extensions.join(', ') || '—';
+        document.getElementById('fido-pin').textContent = info.pin_retries ?? '—';
       } catch (e) {
-        console.error(e);
+        console.error('scanFido failed:', e);
+        document.getElementById('fido-status').textContent = 'error';
       }
     }
 
