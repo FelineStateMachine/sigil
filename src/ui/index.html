@@ -248,6 +248,10 @@
       align-items: center;
       justify-content: center;
       background: var(--background);
+      background-image:
+        linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+      background-size: 32px 32px;
     }
     .overlay-screen.hidden { display: none; }
     .overlay-content {
@@ -262,11 +266,21 @@
       color: var(--foreground);
       margin-bottom: 12px;
     }
+    #intro .overlay-content h1 {
+      font-size: 26px;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+    }
     .overlay-content p {
-      font-size: 13px;
+      font-size: 12px;
       color: var(--muted-fg);
       line-height: 1.6;
       margin-bottom: 24px;
+      font-family: var(--mono);
+      letter-spacing: 0.02em;
+    }
+    .shortcut-key {
+      color: var(--foreground);
     }
     .overlay-form {
       display: flex;
@@ -424,7 +438,7 @@
   <div class="overlay-screen hidden" id="intro">
     <div class="overlay-content">
       <h1>keyhome</h1>
-      <p id="intro-desc">Type PIN</p>
+      <p id="intro-desc">type pin</p>
 
       <!-- Unregistered: register or connect -->
       <div id="intro-unregistered">
@@ -1605,13 +1619,13 @@
         : document.getElementById('intro-pin-reg');
       const desc = document.getElementById('intro-desc');
       if (!pinEl || !pinEl.value.trim()) {
-        desc.textContent = 'Type PIN';
+        desc.textContent = 'type pin';
         return;
       }
       if (unregVisible) {
-        desc.innerHTML = 'Type PIN · <u>c</u>=connect · <u>r</u>=register';
+        desc.textContent = '[c]=connect · [r]=register';
       } else {
-        desc.innerHTML = 'Type PIN · <u>c</u>=connect · <u>h</u>=host';
+        desc.textContent = '[c]=connect · [h]=host';
       }
     }
     document.getElementById('intro-pin-unreg').addEventListener('input', updateIntroDes);
