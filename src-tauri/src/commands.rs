@@ -677,6 +677,293 @@ async fn stream_frames(conn: Connection, app: &AppHandle) -> anyhow::Result<()> 
         return Ok(());
     }
 
+    // Detect screen dimensions (one-time xcap call)
+    let (w, h) = {
+        let monitors = xcap::Monitor::all().context("failed to enumerate monitors")?;
+        let mon = monitors
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("no monitors found"))?;
+        let img = mon.capture_image()?;
+        (img.width() as usize, img.height() as usize)
+    };
+    eprintln!("[host] screen resolution: {}x{}", w, h);
+
+    // Try ffmpeg subprocess first
+    if ffmpeg_available() {
+        eprintln!("[host] using ffmpeg subprocess for capture+encode");
+        match stream_frames_ffmpeg(&mut send, &mut recv, app, w, h).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("[host] ffmpeg failed: {}, falling back to xcap+openh264", e);
+            }
+        }
+    }
+
+    // Fallback: xcap + openh264
+    eprintln!("[host] using xcap + openh264");
+    stream_frames_xcap(&mut send, &mut recv, app).await
+}
+
+// ─── ffmpeg subprocess path ──────────────────────────────────────────────────
+
+fn ffmpeg_available() -> bool {
+    std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
+fn detect_ffmpeg_encoder() -> String {
+    // Check which hardware encoders are available
+    let encoders = std::process::Command::new("ffmpeg")
+        .arg("-encoders")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    if cfg!(target_os = "macos") {
+        if encoders.contains("h264_videotoolbox") {
+            return "h264_videotoolbox".to_string();
+        }
+    } else {
+        if encoders.contains("h264_nvenc") {
+            return "h264_nvenc".to_string();
+        }
+        if encoders.contains("h264_vaapi") {
+            return "h264_vaapi".to_string();
+        }
+    }
+    "libx264".to_string()
+}
+
+/// Find the next AUD (NAL type 9) start code after `from`.
+fn find_next_aud(data: &[u8], from: usize) -> Option<usize> {
+    let mut i = from;
+    while i + 4 < data.len() {
+        if data[i] == 0 && data[i + 1] == 0 {
+            if data[i + 2] == 0 && i + 3 < data.len() && data[i + 3] == 1 {
+                if i + 4 < data.len() && (data[i + 4] & 0x1f) == 9 {
+                    return Some(i);
+                }
+                i += 4;
+                continue;
+            }
+            if data[i + 2] == 1 {
+                if i + 3 < data.len() && (data[i + 3] & 0x1f) == 9 {
+                    return Some(i);
+                }
+                i += 3;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Check if a frame's NAL data contains an IDR (type 5) or SPS (type 7).
+fn frame_is_keyframe(data: &[u8]) -> bool {
+    let mut i = 0;
+    while i + 3 < data.len() {
+        if data[i] == 0 && data[i + 1] == 0 {
+            let (sc_len, nal_off) = if data[i + 2] == 0 && i + 3 < data.len() && data[i + 3] == 1 {
+                (4, 4)
+            } else if data[i + 2] == 1 {
+                (3, 3)
+            } else {
+                i += 1;
+                continue;
+            };
+            if i + nal_off < data.len() {
+                let nal_type = data[i + nal_off] & 0x1f;
+                if nal_type == 5 || nal_type == 7 {
+                    return true;
+                }
+            }
+            i += sc_len;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
+async fn stream_frames_ffmpeg(
+    send: &mut iroh::endpoint::SendStream,
+    recv: &mut iroh::endpoint::RecvStream,
+    app: &AppHandle,
+    width: usize,
+    height: usize,
+) -> anyhow::Result<()> {
+    use std::process::Stdio;
+    use tokio::io::AsyncReadExt;
+    use tokio::process::Command as TokioCommand;
+
+    let encoder = detect_ffmpeg_encoder();
+    eprintln!("[host] ffmpeg encoder: {}", encoder);
+
+    let mut cmd = TokioCommand::new("ffmpeg");
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+
+    // Input: screen capture
+    if cfg!(target_os = "macos") {
+        cmd.arg("-f").arg("avfoundation")
+            .arg("-framerate").arg("30")
+            .arg("-capture_cursor").arg("1")
+            .arg("-i").arg("1:");
+    } else {
+        let display = std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string());
+        cmd.arg("-f").arg("x11grab")
+            .arg("-framerate").arg("30")
+            .arg("-video_size").arg(format!("{}x{}", width, height))
+            .arg("-i").arg(&display);
+    }
+
+    // Encoder-specific settings
+    match encoder.as_str() {
+        "h264_nvenc" => {
+            cmd.arg("-c:v").arg("h264_nvenc")
+                .arg("-preset").arg("p1")
+                .arg("-tune").arg("ll")
+                .arg("-rc").arg("cbr")
+                .arg("-b:v").arg("8M");
+        }
+        "h264_vaapi" => {
+            cmd.arg("-c:v").arg("h264_vaapi")
+                .arg("-rc_mode").arg("CBR")
+                .arg("-b:v").arg("8M");
+        }
+        "h264_videotoolbox" => {
+            cmd.arg("-c:v").arg("h264_videotoolbox")
+                .arg("-realtime").arg("1")
+                .arg("-b:v").arg("8M");
+        }
+        _ => {
+            // libx264 software fallback
+            cmd.arg("-c:v").arg("libx264")
+                .arg("-preset").arg("ultrafast")
+                .arg("-tune").arg("zerolatency")
+                .arg("-b:v").arg("8M");
+        }
+    }
+
+    // Common output settings
+    cmd.arg("-g").arg("30")
+        .arg("-bf").arg("0")
+        .arg("-pix_fmt").arg("yuv420p")
+        .arg("-bsf:v").arg("h264_metadata=aud=insert")
+        .arg("-f").arg("h264")
+        .arg("-");
+
+    let mut child = cmd.spawn().context("failed to spawn ffmpeg")?;
+    let mut stdout = child.stdout.take().context("no stdout from ffmpeg")?;
+
+    let mut buf: Vec<u8> = Vec::with_capacity(65536);
+    let mut frame_start: usize = 0;
+    let mut first_aud_seen = false;
+    let mut frame_count = 0u32;
+    let start = Instant::now();
+    let mut last_frame_time = Instant::now();
+
+    loop {
+        let mut tmp = [0u8; 16384];
+        let n = stdout.read(&mut tmp).await?;
+        if n == 0 {
+            eprintln!("[host] ffmpeg stdout closed");
+            break;
+        }
+        buf.extend_from_slice(&tmp[..n]);
+
+        // Extract complete frames (delimited by AUD NAL units)
+        loop {
+            let search_from = if first_aud_seen { frame_start + 6 } else { 0 };
+            match find_next_aud(&buf, search_from) {
+                Some(aud_pos) => {
+                    if first_aud_seen {
+                        // Frame data: buf[frame_start..aud_pos]
+                        let frame_data = &buf[frame_start..aud_pos];
+                        let is_keyframe = frame_is_keyframe(frame_data);
+                        let frame_size = frame_data.len();
+
+                        let now = Instant::now();
+                        let frame_ms = now.duration_since(last_frame_time).as_secs_f64() * 1000.0;
+                        last_frame_time = now;
+
+                        // Header: width(4) + height(4) + size(4) + is_keyframe(1) = 13 bytes
+                        let header = [
+                            (width as u32).to_be_bytes(),
+                            (height as u32).to_be_bytes(),
+                            (frame_size as u32).to_be_bytes(),
+                        ]
+                        .concat();
+                        let kf_byte = if is_keyframe { 1u8 } else { 0u8 };
+
+                        send.write_all(&header).await?;
+                        send.write_all(&[kf_byte]).await?;
+                        send.write_all(frame_data).await?;
+
+                        frame_count += 1;
+                        let elapsed = start.elapsed();
+                        let fps = frame_count as f64 / elapsed.as_secs_f64().max(0.001);
+
+                        let _ = app.emit(
+                            "host-encode-stats",
+                            serde_json::json!({
+                                "frame": frame_count,
+                                "encode_ms": (frame_ms * 10.0).round() / 10.0,
+                                "capture_ms": 0.0,
+                                "size_bytes": frame_size,
+                                "fps": (fps * 10.0).round() / 10.0,
+                                "keyframe": is_keyframe,
+                            }),
+                        );
+
+                        eprintln!(
+                            "[host] frame={} {}x{} h264={}B kf={} fps={:.1} ftime={:.1}ms",
+                            frame_count, width, height, frame_size, is_keyframe, fps, frame_ms
+                        );
+                    }
+                    frame_start = aud_pos;
+                    first_aud_seen = true;
+                }
+                None => break,
+            }
+        }
+
+        // Trim consumed data from buffer
+        if frame_start > 0 && frame_start >= buf.len() / 2 {
+            buf.drain(..frame_start);
+            frame_start = 0;
+        }
+
+        // Check for client disconnect
+        match tokio::time::timeout(Duration::from_millis(1), recv.read(&mut [0u8; 1])).await {
+            Ok(Ok(Some(_))) => {
+                eprintln!("[host] client disconnected");
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    let _ = child.kill().await;
+    Ok(())
+}
+
+// ─── xcap + openh264 fallback path ───────────────────────────────────────────
+
+async fn stream_frames_xcap(
+    send: &mut iroh::endpoint::SendStream,
+    recv: &mut iroh::endpoint::RecvStream,
+    app: &AppHandle,
+) -> anyhow::Result<()> {
     let monitors = xcap::Monitor::all().context("failed to enumerate monitors")?;
     let monitor = monitors
         .into_iter()
@@ -749,7 +1036,6 @@ async fn stream_frames(conn: Connection, app: &AppHandle) -> anyhow::Result<()> 
             _ => {}
         }
 
-        // Backpressure: yield to scheduler, no artificial throttle
         tokio::task::yield_now().await;
     }
 

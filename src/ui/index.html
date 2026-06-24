@@ -503,8 +503,8 @@
       </div>
       <div class="panel-section">
         <h3># performance</h3>
-        <div class="info-row"><span class="info-label">encode</span><span class="info-value" id="perf-encode">— ms</span></div>
-        <div class="info-row"><span class="info-label">capture</span><span class="info-value" id="perf-capture">— ms</span></div>
+        <div class="info-row"><span class="info-label">frame time</span><span class="info-value" id="perf-encode">— ms</span></div>
+        <div class="info-row"><span class="info-label">encoder</span><span class="info-value" id="perf-capture">—</span></div>
         <div class="info-row"><span class="info-label">frame size</span><span class="info-value" id="perf-size">— KB</span></div>
         <div class="info-row"><span class="info-label">fps</span><span class="info-value" id="perf-fps">—</span></div>
         <canvas id="encode-spark" width="260" height="48" style="width:100%;height:48px;margin-top:8px;display:block;"></canvas>
@@ -873,7 +873,7 @@
     listen('host-encode-stats', (event) => {
       const { encode_ms, capture_ms, size_bytes, fps } = event.payload;
       document.getElementById('perf-encode').textContent = encode_ms.toFixed(1) + ' ms';
-      document.getElementById('perf-capture').textContent = capture_ms.toFixed(1) + ' ms';
+      document.getElementById('perf-capture').textContent = capture_ms > 0 ? capture_ms.toFixed(1) + ' ms' : 'ffmpeg';
       document.getElementById('perf-size').textContent = (size_bytes / 1024).toFixed(1) + ' KB';
       document.getElementById('perf-fps').textContent = fps.toFixed(1);
 
