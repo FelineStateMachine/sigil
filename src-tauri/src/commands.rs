@@ -870,26 +870,29 @@ fn codec_format(codec: &str) -> (&'static str, &'static str) {
 }
 
 /// Find the next frame delimiter in the NAL stream.
-/// H.264/H.265: AUD start code (00 00 00 01 + NAL type 9 for H.264, type 35 for H.265)
+/// H.264/H.265: AUD start code (NAL type 9 for H.264, type 35 for H.265)
 /// AV1: temporal delimiter OBU
 fn find_next_frame_delim(data: &[u8], from: usize, codec: &str) -> Option<usize> {
-    let aud_nal_type = match codec {
-        "h265" => 35, // HEVC AUD
-        _ => 9,       // H.264 AUD
-    };
-
     let mut i = from;
     while i + 4 < data.len() {
         if data[i] == 0 && data[i + 1] == 0 {
             if data[i + 2] == 0 && i + 3 < data.len() && data[i + 3] == 1 {
                 // 4-byte start code
                 if codec == "av1" {
-                    // AV1 temporal delimiter: OBU type 2 (0x12 or 0x22 with extension flag)
+                    // AV1 temporal delimiter: OBU type 2 (0x10 in type field)
                     if i + 4 < data.len() && (data[i + 4] & 0x38) == 0x10 {
                         return Some(i);
                     }
-                } else if i + 4 < data.len() && (data[i + 4] & 0x7f) == aud_nal_type {
-                    return Some(i);
+                } else if codec == "h265" {
+                    // HEVC NAL type is (byte >> 1) & 0x3f, AUD = 35
+                    if i + 4 < data.len() && ((data[i + 4] >> 1) & 0x3f) == 35 {
+                        return Some(i);
+                    }
+                } else {
+                    // H.264 NAL type is byte & 0x1f, AUD = 9
+                    if i + 4 < data.len() && (data[i + 4] & 0x1f) == 9 {
+                        return Some(i);
+                    }
                 }
                 i += 4;
                 continue;
@@ -900,8 +903,14 @@ fn find_next_frame_delim(data: &[u8], from: usize, codec: &str) -> Option<usize>
                     if i + 3 < data.len() && (data[i + 3] & 0x38) == 0x10 {
                         return Some(i);
                     }
-                } else if i + 3 < data.len() && (data[i + 3] & 0x7f) == aud_nal_type {
-                    return Some(i);
+                } else if codec == "h265" {
+                    if i + 3 < data.len() && ((data[i + 3] >> 1) & 0x3f) == 35 {
+                        return Some(i);
+                    }
+                } else {
+                    if i + 3 < data.len() && (data[i + 3] & 0x1f) == 9 {
+                        return Some(i);
+                    }
                 }
                 i += 3;
                 continue;
