@@ -3325,29 +3325,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyhome"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "ctap-hid-fido2",
- "enigo",
- "image",
- "iroh",
- "keyring",
- "log",
- "openh264",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tauri",
- "tauri-build",
- "tauri-plugin-log",
- "tokio",
- "xcap",
-]
-
-[[package]]
 name = "keyring"
 version = "3.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5978,6 +5955,29 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "sigil"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "ctap-hid-fido2",
+ "enigo",
+ "image",
+ "iroh",
+ "keyring",
+ "log",
+ "openh264",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-log",
+ "tokio",
+ "xcap",
+]
 
 [[package]]
 name = "signal-hook-registry"
