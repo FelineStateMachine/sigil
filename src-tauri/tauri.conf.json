@@ -12,7 +12,8 @@
         "title": "Keyhome",
         "width": 1024,
         "height": 768,
-        "resizable": true
+        "resizable": true,
+        "visible": false
       }
     ],
     "security": {

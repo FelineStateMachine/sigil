@@ -11,6 +11,8 @@ fn main() {
         .manage(AppState::default())
         .setup(|app| {
             use tauri::Manager;
+
+            // Load persisted encoder config before the window reads it
             if let Ok(data_dir) = app.path().app_data_dir() {
                 let path = data_dir.join("encoder_config.json");
                 if let Ok(contents) = std::fs::read_to_string(&path) {
@@ -22,6 +24,14 @@ fn main() {
                     }
                 }
             }
+
+            // Daemon mode runs headless; only show the window for interactive use
+            if !app.state::<commands::AppState>().daemon {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
