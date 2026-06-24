@@ -1,29 +1,29 @@
 # sigil
 
-A native remote desktop app secured by FIDO2 hardware keys. Plug in a YubiKey or Google Titan, tap it, and connect to your machine over an end-to-end encrypted Iroh tunnel. No passwords, no addresses — the key derives the identity.
+Your key is the address. Plug in, tap, connect.
 
 ## What is it?
 
-Sigil is a Tauri v2 desktop app (Rust backend, vanilla JS frontend) that lets you remote into your machine using a FIDO2 security key as the sole authentication factor. The key produces a `hmac-secret` that becomes the 32-byte seed for an Iroh P2P endpoint. Both host and client derive the same identity from the same key — no address sharing, no passwords, no relay configuration.
+Sigil is a Tauri v2 desktop app (Rust backend, vanilla JS frontend) that lets you remote into your machine using a FIDO2 security key as the sole authentication factor. The key produces a `hmac-secret` that becomes the 32-byte seed for an Iroh P2P endpoint. Both host and client derive the same identity from the same key. The key handles addressing.
 
 Screen capture and encoding run through an ffmpeg subprocess with hardware acceleration (NVENC, VAAPI, QSV, AMF, VideoToolbox) up to 60fps. The client decodes via WebCodecs with hardware acceleration for H.264, H.265, and AV1. A software fallback (xcap + openh264) is available if ffmpeg isn't installed.
 
 ## Why use it?
 
-- **No addresses to share.** The FIDO2 key derives the Iroh peer identity. Both sides get the same node ID from the same key.
+- **Shared identity.** The FIDO2 key derives the Iroh peer identity. Both sides get the same node ID from the same key.
 - **End-to-end encrypted.** Iroh handles the transport with built-in E2EE. The key never leaves the hardware token.
-- **Hardware-accelerated video.** ffmpeg handles capture + encode with your GPU. WebCodecs handles decode on the client. Up to 60fps.
+- **Hardware-accelerated video.** ffmpeg handles capture and encode with your GPU. WebCodecs handles decode on the client. Up to 60fps.
 - **Cross-platform.** Linux, macOS, Windows. Auto-detects the best encoder for your hardware.
-- **No cloud, no account.** Peer-to-peer via Iroh relay. No third-party services.
+- **Peer-to-peer.** Via Iroh relay. No third-party services or accounts.
 - **Single binary.** Tauri bundles everything except ffmpeg (system dependency).
 
 ## Install
 
 ### Prerequisites
 
-- **Rust 1.85+** — [install](https://rustup.rs)
-- **ffmpeg** — screen capture + hardware encoding
-- **FIDO2 security key** — YubiKey, Google Titan, or any FIDO2 key with hmac-secret support
+- **Rust 1.85+** ([install](https://rustup.rs))
+- **ffmpeg** for screen capture and hardware encoding
+- **FIDO2 security key** with hmac-secret support (YubiKey, Google Titan, etc.)
 
 ### Linux (Ubuntu/Debian)
 
@@ -70,9 +70,9 @@ Download from the [releases page](https://github.com/FelineStateMachine/sigil/re
 
 ### Usage
 
-1. **Register** (one-time per machine) — click register, tap your key. Creates a resident credential.
-2. **Host** — click host. The app starts listening on an Iroh endpoint derived from your key.
-3. **Connect** — on another machine, click connect, tap the same key. The screen appears, input is forwarded.
+1. **Register** (one-time per machine): click register, tap your key. Creates a resident credential.
+2. **Host**: click host. The app starts listening on an Iroh endpoint derived from your key.
+3. **Connect**: on another machine, click connect, tap the same key. The screen appears, input is forwarded.
 
 Keyboard shortcuts: type your PIN, then press `c` (connect), `r` (register), or `h` (host).
 
