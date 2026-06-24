@@ -248,16 +248,14 @@
       align-items: center;
       justify-content: center;
       background: var(--background);
-      background-image:
-        linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
-      background-size: 32px 32px;
     }
     .overlay-screen.hidden { display: none; }
     .overlay-content {
       text-align: center;
-      max-width: 360px;
-      padding: 40px;
+      width: 320px;
+      padding: 32px;
+      border: 1px solid var(--border-strong);
+      background: var(--muted);
     }
     .overlay-content h1 {
       font-family: var(--mono);
