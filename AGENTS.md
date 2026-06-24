@@ -4,7 +4,16 @@ Keyhome is a Tauri v2 remote desktop app with FIDO2 key authentication over Iroh
 
 ## Current focus
 
-The project is past the spike/validation phase. The main work now is **performance optimization** — improving frame rate (FPS), reducing latency, and tuning the H.264 encoding pipeline.
+The project is past the spike/validation phase. ffmpeg subprocess is now the primary capture+encode path (xcap+openh264 is the fallback), achieving ~28 fps with NVENC (up from ~1–2 fps). The bottleneck has moved to network/relay throughput and client-side decode.
+
+Active work areas:
+
+- **Codec configurability** — H.264, H.265, and AV1 are all supported. Users can select codec + encoder backend (nvenc, vaapi, qsv, amf, videotoolbox, software) in the info panel.
+- **Multi-codec WebCodecs decode** — frontend handles H.264 (AVCC), H.265 (hvcC), and AV1 (OBU) for hardware-accelerated decode.
+- **Connection tracking** — fixed with `conn.closed()` future + `tokio::select!` for reliable disconnect detection; connection counter now properly decrements.
+- **Wire protocol** — header expanded to 14 bytes: `width(4) + height(4) + size(4) + keyframe(1) + codec(1)`. Codec byte: 0=h264, 1=h265, 2=av1.
+- **Client-side stats** — info panel shows codec received, dropped frames, total frames received when connected as client. Encoder config and host performance sections are hidden when connected.
+- **Remaining performance work** — network/relay throughput, client-side decode efficiency.
 
 ## Key files
 

@@ -77,7 +77,7 @@ Seven spikes were completed as viability evidence. They live in `spikes/`.
 
 ## Requirements
 
-- **OS:** Linux or macOS
+- **OS:** Linux, macOS, or Windows
 - **Hardware:** A FIDO2 security key (Google Titan, YubiKey)
 - **System dependencies:** See [docs/SETUP.md](docs/SETUP.md)
 

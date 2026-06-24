@@ -52,6 +52,20 @@ Grant the following permissions in **System Settings > Privacy & Security**:
 - **Accessibility** — required for input injection (mouse/keyboard control)
 - **Screen Recording** — required for screen capture
 
+### Windows
+
+Install the Tauri CLI (v2):
+
+```bash
+cargo install tauri-cli --version "^2"
+
+# ffmpeg — screen capture (gdigrab) + hardware encoding (NVENC/QSV/AMF)
+choco install ffmpeg
+# or: scoop install ffmpeg
+```
+
+ffmpeg auto-detects the best available encoder in this order: NVENC → QSV → AMF → libx264 (software).
+
 ### Clone
 
 ```bash
@@ -101,13 +115,24 @@ Click **Connect** and tap your Titan key. The app derives the same host endpoint
 ## Architecture
 
 - **Transport**: Iroh 1.0 (peer-to-peer, relay-assisted)
-- **Screen capture + encoding**: ffmpeg subprocess (x11grab + NVENC/VAAPI on Linux, avfoundation + VideoToolbox on macOS)
+- **Screen capture + encoding**: ffmpeg subprocess (x11grab on Linux, avfoundation on macOS, gdigrab on Windows)
+- **Encoder backends**: NVENC, VAAPI, QSV, AMF, VideoToolbox, or software (auto-detected or user-selected)
+- **Video codecs**: H.264, H.265, AV1 (configurable in the info panel)
+- **Client-side decode**: WebCodecs — H.264 (AVCC), H.265 (hvcC), AV1 (OBU), hardware-accelerated
 - **Fallback**: xcap capture + openh264 software encoding (if ffmpeg not installed)
 - **FIDO2**: ctap-hid-fido2 (CTAP 2.0/2.1 over HID)
-- **Frame encoding**: H.264 (ffmpeg/NVENC primary, openh264 fallback for client-side decode)
 - **Input injection**: enigo (cross-platform mouse/keyboard)
-- **Protocol**: BiStream with frame header `[width:u32][height:u32][h264_len:u32][keyframe:u8][h264_data]`
 - **Identity**: Iroh SecretKey derived from Titan hmac-secret extension; no address copy/paste
+- **Protocol**: BiStream with a 14-byte frame header:
+
+```
+[width:u32][height:u32][size:u32][keyframe:u8][codec:u8][frame_data]
+```
+
+Codec byte: `0` = H.264, `1` = H.265, `2` = AV1.
+
+- **Connection tracking**: Uses `conn.closed()` future + `tokio::select!` for reliable disconnect detection; connection counter decrements on disconnect.
+- **Client-side stats**: Info panel shows codec received, dropped frames, and total frames received when connected as a client. Encoder config and host performance sections are hidden when connected.
 
 ## Spikes (evidence)
 
