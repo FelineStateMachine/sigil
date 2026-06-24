@@ -1,62 +1,79 @@
-# Keyhome
+# keyhome
 
-Keyhome is a native remote-control client concept: open the app, plug in a YubiKey, tap or enter PIN when required, and connect to the paired home machine over an end-to-end encrypted Iroh tunnel.
+A native remote desktop app secured by FIDO2 hardware keys. Plug in a Google Titan or YubiKey, tap it, and connect to your home machine over an end-to-end encrypted Iroh tunnel. No passwords, no addresses shared — the key derives the Iroh identity.
 
-The point of this repo is to test viability before building a polished product. The MVP should prove four things:
+## Status
 
-1. A Tauri Rust backend can reliably detect and challenge a YubiKey across Linux/macOS/Windows.
-2. The YubiKey can carry or derive the identity material needed to authenticate the user and find the remote machine.
-3. A native Iroh node can dial the host agent and establish an authenticated encrypted session.
-4. Remote desktop control can be streamed with acceptable latency after hardware-backed auth.
+Early prototype. Core functionality works (identity derivation, streaming, input). Performance optimization in progress. Current frame rate is ~1–2 fps. The main bottleneck is openh264 software encoding on the host and lack of hardware decode on the client when WebCodecs is unavailable.
 
-## Architecture hypothesis
+## How it works
+
+You plug in a FIDO2 security key (Google Titan, YubiKey) and tap it. The key produces a `hmac-secret` that becomes the 32-byte seed for an Iroh `SecretKey`. Both the host and client derive the same Iroh node ID from the same key — no addresses are exchanged, no passwords are stored.
+
+1. **One-time registration.** Tap the key → `hmac-secret` → 32 bytes → OS keyring.
+2. **Host starts.** Read from keyring → Iroh `SecretKey` → `Endpoint`.
+3. **Client connects.** Tap the key → derive the host's node ID → dial via relay.
+
+The connection is end-to-end encrypted by Iroh. The key never leaves the hardware token; only the derived secret is persisted in the OS keyring.
+
+## Architecture
 
 ```text
-+------------------ Keyhome Tauri Client ------------------+
-| UI webview                                                |
-| - connection state                                        |
-| - video/input surface                                     |
-| - setup and diagnostics                                   |
-|                                                          |
-| Tauri IPC                                                 |
-|                                                          |
-| Rust backend                                              |
-| - YubiKey detection/challenge/PIN flow                    |
-| - token-resident peer/address config                      |
-| - native Iroh endpoint                                    |
-| - remote-control protocol client                          |
-+----------------------------+-----------------------------+
-                             |
-                             | E2EE Iroh protocol
-                             v
-+----------------------- Host Agent ------------------------+
-| - paired node identity                                    |
-| - screen capture / encode                                 |
-| - keyboard + pointer injection                            |
-| - user consent / local safety controls                    |
-+-----------------------------------------------------------+
++--------------------------- keyhome (Tauri v2) ---------------------------+
+|                                                                         |
+|  Frontend (vanilla JS, no npm)                                          |
+|  - connection state, video canvas, input capture                        |
+|                                                                         |
+|  Tauri IPC                                                              |
+|                                                                         |
+|  Rust backend                                                           |
+|  - FIDO2 CTAP via ctap-hid-fido2       - Screen capture via xcap         |
+|  - Iroh Endpoint (P2P, relay, E2EE)    - H.264 encoding via openh264     |
+|  - OS keyring for identity             - Input injection via enigo      |
+|                                                                         |
++----------------------------------+--------------------------------------+
+                                   |
+                                   | Iroh (E2EE, relay-assisted)
+                                   v
++------------------------------ Host -------------------------------------+
+|  - Iroh Endpoint (identity from keyring)                                |
+|  - xcap screen capture → openh264 H.264 encode                          |
+|  - enigo mouse/keyboard injection                                       |
++-------------------------------------------------------------------------+
 ```
 
-## Planning artifacts
+| Layer | Crate / Tool |
+|---|---|
+| App shell | Tauri v2 |
+| Backend | Rust |
+| P2P transport | Iroh (relay-assisted, end-to-end encrypted) |
+| Hardware auth | FIDO2 CTAP via `ctap-hid-fido2` |
+| Screen capture | `xcap` |
+| Video encoding | `openh264` (software) |
+| Input injection | `enigo` |
+| Identity storage | OS keyring |
+| Frontend | Vanilla JS (no npm, no build step) |
 
-- `openspec/project.md` — project conventions and scope boundaries.
-- `openspec/specs/yubikey-identity/spec.md` — hardware identity and token data requirements.
-- `openspec/specs/iroh-session/spec.md` — peer discovery, authenticated dialing, and encrypted channel requirements.
-- `openspec/specs/remote-control/spec.md` — desktop streaming and input behavior requirements.
-- `openspec/changes/validate-tauri-yubikey-iroh-mvp/` — first MVP viability-testing plan.
+## Spikes
 
-## Non-goals for the first MVP
+Seven spikes were completed as viability evidence. They live in `spikes/`.
 
-- General-purpose account systems.
-- Browser-only implementation.
-- Cloud relay ownership beyond what Iroh itself requires.
-- Polished installer/update channels.
-- Production-grade cross-platform remote-control permissions UX.
+| # | Spike | What it proved |
+|---|---|---|
+| 1 | `001-iroh-native-ping` | Iroh connectivity between two native endpoints |
+| 2 | `002-yubikey-hmac-detection` | YubiKey HMAC-Secret detection and invocation |
+| 3 | `003-fido2-hid-enumeration` | FIDO2 HID device enumeration via `ctap-hid-fido2` |
+| 4 | `004-hmac-iroh-derivation` | HMAC-Secret → Iroh `SecretKey` derivation |
+| 5 | `005-frame-stream` | Frame streaming over Iroh |
+| 6 | `006-input-injection` | Mouse/keyboard injection via `enigo` |
+| 7 | `007-titan-no-copy` | Titan key derives identity without copying secrets off-device |
 
-## Initial technology candidates
+## Requirements
 
-- App shell: Tauri 2.
-- Backend: Rust.
-- Network: Iroh native Rust stack.
-- Hardware auth: YubiKey challenge-response/PIV/OpenPGP/CTAP investigation; exact mode is part of the viability work.
-- Host agent: Rust service/binary, initially local or same-LAN before hardening NAT traversal and unattended access.
+- **OS:** Linux or macOS
+- **Hardware:** A FIDO2 security key (Google Titan, YubiKey)
+- **System dependencies:** See [docs/SETUP.md](docs/SETUP.md)
+
+## License
+
+MIT

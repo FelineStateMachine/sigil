@@ -22,9 +22,9 @@
 
 ## 4. Remote-control viability
 
-- [ ] 4.1 Stream synthetic or captured frames from host to client.
-- [ ] 4.2 Render frames in the Tauri UI.
-- [ ] 4.3 Send pointer and keyboard events from client to host.
+- [x] 4.1 Stream synthetic or captured frames from host to client.
+- [x] 4.2 Render frames in the Tauri UI.
+- [x] 4.3 Send pointer and keyboard events from client to host.
 - [ ] 4.4 Measure rough latency and CPU for the MVP path.
 
 ## 5. Review gate

@@ -1,16 +1,12 @@
 [package]
-name = "app"
+name = "keyhome"
 version = "0.1.0"
-description = "Keyhome — FIDO2-secured remote desktop via Iroh"
+description = "FIDO2-secured remote desktop via Iroh"
 authors = ["Dami"]
 license = "MIT"
-repository = ""
+repository = "https://github.com/FelineStateMachine/keyhome"
 edition = "2024"
 rust-version = "1.85"
-
-[lib]
-name = "app_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
