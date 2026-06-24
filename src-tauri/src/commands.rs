@@ -658,7 +658,7 @@ impl ProtocolHandler for FrameStreamHandler {
         let count = self.connections.fetch_add(1, Ordering::SeqCst) + 1;
         let _ = self.app.emit("host-connections", count);
         eprintln!("[host] client connected: {} (total: {})", conn.remote_id(), count);
-        if let Err(e) = stream_frames(conn).await {
+        if let Err(e) = stream_frames(conn, &self.app).await {
             eprintln!("[host] stream error: {}", e);
         }
         let count = self.connections.fetch_sub(1, Ordering::SeqCst) - 1;
@@ -668,7 +668,7 @@ impl ProtocolHandler for FrameStreamHandler {
     }
 }
 
-async fn stream_frames(conn: Connection) -> anyhow::Result<()> {
+async fn stream_frames(conn: Connection, app: &AppHandle) -> anyhow::Result<()> {
     let (mut send, mut recv) = conn.accept_bi().await?;
 
     let mut start_buf = [0u8; 1];
@@ -689,11 +689,15 @@ async fn stream_frames(conn: Connection) -> anyhow::Result<()> {
     let start = Instant::now();
 
     loop {
+        let capture_start = Instant::now();
         let image = monitor.capture_image()?;
+        let capture_ms = capture_start.elapsed().as_secs_f64() * 1000.0;
+
         let rgb_image = image::DynamicImage::ImageRgba8(image).to_rgb8();
         let (w, h) = (rgb_image.width() as usize, rgb_image.height() as usize);
 
         // RGB8 → YUV → H.264
+        let encode_start = Instant::now();
         let rgb_source = RgbSliceU8::new(rgb_image.as_raw(), (w, h));
         let yuv = YUVBuffer::from_rgb8_source(rgb_source);
         let (h264_data, is_keyframe) = {
@@ -701,6 +705,7 @@ async fn stream_frames(conn: Connection) -> anyhow::Result<()> {
             let kf = matches!(bitstream.frame_type(), openh264::encoder::FrameType::I | openh264::encoder::FrameType::IDR);
             (bitstream.to_vec(), kf)
         };
+        let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
         let h264_size = h264_data.len();
 
         // Header: width(4) + height(4) + size(4) + is_keyframe(1) = 13 bytes
@@ -720,8 +725,20 @@ async fn stream_frames(conn: Connection) -> anyhow::Result<()> {
         let elapsed = start.elapsed();
         let fps = frame_count as f64 / elapsed.as_secs_f64().max(0.001);
         eprintln!(
-            "[host] frame={} {}x{} h264={}B kf={} fps={:.1}",
-            frame_count, w, h, h264_size, is_keyframe, fps
+            "[host] frame={} {}x{} h264={}B kf={} fps={:.1} enc={:.1}ms cap={:.1}ms",
+            frame_count, w, h, h264_size, is_keyframe, fps, encode_ms, capture_ms
+        );
+
+        let _ = app.emit(
+            "host-encode-stats",
+            serde_json::json!({
+                "frame": frame_count,
+                "encode_ms": (encode_ms * 10.0).round() / 10.0,
+                "capture_ms": (capture_ms * 10.0).round() / 10.0,
+                "size_bytes": h264_size,
+                "fps": (fps * 10.0).round() / 10.0,
+                "keyframe": is_keyframe,
+            }),
         );
 
         match tokio::time::timeout(Duration::from_millis(1), recv.read(&mut [0u8; 1])).await {
