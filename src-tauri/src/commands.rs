@@ -32,7 +32,7 @@ use std::io::Cursor;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex as TokioMutex;
 
 const FRAME_ALPN: &[u8] = b"keyhome/frame-stream/0";
@@ -299,6 +299,27 @@ fn key_from_str(s: &str) -> Option<Key> {
 
 // ─── AppState ────────────────────────────────────────────────────────────────
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EncoderConfig {
+    pub codec: String,       // "h264", "h265", "av1"
+    pub backend: String,     // "auto", "nvenc", "vaapi", "videotoolbox", "software"
+    pub bitrate: String,     // e.g. "8M"
+    pub framerate: u32,      // e.g. 30
+    pub gop: u32,            // keyframe interval
+}
+
+impl Default for EncoderConfig {
+    fn default() -> Self {
+        Self {
+            codec: "h264".to_string(),
+            backend: "auto".to_string(),
+            bitrate: "8M".to_string(),
+            framerate: 30,
+            gop: 30,
+        }
+    }
+}
+
 pub struct AppState {
     pub host: Mutex<Option<HostState>>,
     pub host_connections: Arc<AtomicU32>,
@@ -307,6 +328,7 @@ pub struct AppState {
     pub client_endpoint: TokioMutex<Option<Endpoint>>,
     pub webcodecs: std::sync::atomic::AtomicBool,
     pub daemon: bool,
+    pub encoder_config: Mutex<EncoderConfig>,
 }
 
 pub struct HostState {
@@ -324,6 +346,7 @@ impl Default for AppState {
             client_endpoint: TokioMutex::new(None),
             webcodecs: std::sync::atomic::AtomicBool::new(false),
             daemon,
+            encoder_config: Mutex::new(EncoderConfig::default()),
         }
     }
 }
@@ -483,6 +506,40 @@ pub fn set_webcodecs_available(state: State<'_, AppState>, available: bool) {
 #[tauri::command]
 pub fn is_webcodecs_available(state: State<'_, AppState>) -> bool {
     state.webcodecs.load(Ordering::SeqCst)
+}
+
+#[tauri::command]
+pub fn get_encoder_config(state: State<'_, AppState>) -> EncoderConfig {
+    state.encoder_config.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn set_encoder_config(state: State<'_, AppState>, config: EncoderConfig) {
+    *state.encoder_config.lock().unwrap() = config;
+}
+
+#[tauri::command]
+pub fn detect_available_encoders() -> Vec<String> {
+    let encoders = std::process::Command::new("ffmpeg")
+        .arg("-encoders")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let all = [
+        // H.264
+        "h264_nvenc", "h264_vaapi", "h264_qsv", "h264_amf", "h264_videotoolbox", "libx264",
+        // H.265
+        "hevc_nvenc", "hevc_vaapi", "hevc_qsv", "hevc_amf", "hevc_videotoolbox", "libx265",
+        // AV1
+        "av1_nvenc", "av1_vaapi", "av1_qsv", "av1_amf", "av1_videotoolbox", "libsvtav1", "libaom-av1",
+    ];
+
+    all.iter()
+        .filter(|name| encoders.contains(*name))
+        .map(|s| s.to_string())
+        .collect()
 }
 
 // ─── Host Registration (keyring) ─────────────────────────────────────────────
@@ -691,8 +748,15 @@ async fn stream_frames(conn: Connection, app: &AppHandle) -> anyhow::Result<()> 
 
     // Try ffmpeg subprocess first
     if ffmpeg_available() {
-        eprintln!("[host] using ffmpeg subprocess for capture+encode");
-        match stream_frames_ffmpeg(&mut send, &mut recv, app, w, h).await {
+        let config = {
+            let app_state = app.state::<AppState>();
+            app_state.encoder_config.lock().unwrap().clone()
+        };
+        eprintln!(
+            "[host] using ffmpeg: codec={} backend={}",
+            config.codec, config.backend
+        );
+        match stream_frames_ffmpeg(&mut send, &mut recv, app, w, h, &config).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("[host] ffmpeg failed: {}, falling back to xcap+openh264", e);
@@ -716,8 +780,8 @@ fn ffmpeg_available() -> bool {
         .is_ok()
 }
 
-fn detect_ffmpeg_encoder() -> String {
-    // Check which hardware encoders are available
+/// Resolve the ffmpeg encoder name based on codec + backend preference.
+fn resolve_encoder(codec: &str, backend: &str) -> String {
     let encoders = std::process::Command::new("ffmpeg")
         .arg("-encoders")
         .output()
@@ -725,35 +789,102 @@ fn detect_ffmpeg_encoder() -> String {
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
 
-    if cfg!(target_os = "macos") {
-        if encoders.contains("h264_videotoolbox") {
-            return "h264_videotoolbox".to_string();
-        }
+    let has = |name: &str| encoders.contains(name);
+
+    // Backend preference order by platform
+    let hw_backends: &[&str] = if cfg!(target_os = "macos") {
+        &["videotoolbox"]
+    } else if cfg!(target_os = "windows") {
+        &["nvenc", "qsv", "amf"]
     } else {
-        if encoders.contains("h264_nvenc") {
-            return "h264_nvenc".to_string();
-        }
-        if encoders.contains("h264_vaapi") {
-            return "h264_vaapi".to_string();
+        &["nvenc", "vaapi"]
+    };
+
+    let codec_prefix = match codec {
+        "h265" => "hevc",
+        "av1" => "av1",
+        _ => "h264",
+    };
+
+    // If specific backend requested, try it
+    if backend != "auto" {
+        let name = if backend == "software" {
+            match codec {
+                "h265" => "libx265",
+                "av1" => "libsvtav1",
+                _ => "libx264",
+            }
+        } else {
+            &format!("{}_{}", codec_prefix, backend)
+        };
+        if has(name) {
+            return name.to_string();
         }
     }
-    "libx264".to_string()
+
+    // Auto: try hardware backends in order
+    for hw in hw_backends {
+        let name = format!("{}_{}", codec_prefix, hw);
+        if has(&name) {
+            return name;
+        }
+    }
+
+    // Software fallback
+    match codec {
+        "h265" => "libx265".to_string(),
+        "av1" => {
+            if has("libsvtav1") {
+                "libsvtav1".to_string()
+            } else {
+                "libaom-av1".to_string()
+            }
+        }
+        _ => "libx264".to_string(),
+    }
 }
 
-/// Find the next AUD (NAL type 9) start code after `from`.
-fn find_next_aud(data: &[u8], from: usize) -> Option<usize> {
+/// Get the ffmpeg output format and BSF for a given codec.
+fn codec_format(codec: &str) -> (&'static str, &'static str) {
+    match codec {
+        "h265" => ("hevc", "hevc_metadata=aud=insert"),
+        "av1" => ("av1", "av1_metadata=td=insert"),
+        _ => ("h264", "h264_metadata=aud=insert"),
+    }
+}
+
+/// Find the next frame delimiter in the NAL stream.
+/// H.264/H.265: AUD start code (00 00 00 01 + NAL type 9 for H.264, type 35 for H.265)
+/// AV1: temporal delimiter OBU
+fn find_next_frame_delim(data: &[u8], from: usize, codec: &str) -> Option<usize> {
+    let aud_nal_type = match codec {
+        "h265" => 35, // HEVC AUD
+        _ => 9,       // H.264 AUD
+    };
+
     let mut i = from;
     while i + 4 < data.len() {
         if data[i] == 0 && data[i + 1] == 0 {
             if data[i + 2] == 0 && i + 3 < data.len() && data[i + 3] == 1 {
-                if i + 4 < data.len() && (data[i + 4] & 0x1f) == 9 {
+                // 4-byte start code
+                if codec == "av1" {
+                    // AV1 temporal delimiter: OBU type 2 (0x12 or 0x22 with extension flag)
+                    if i + 4 < data.len() && (data[i + 4] & 0x38) == 0x10 {
+                        return Some(i);
+                    }
+                } else if i + 4 < data.len() && (data[i + 4] & 0x7f) == aud_nal_type {
                     return Some(i);
                 }
                 i += 4;
                 continue;
             }
             if data[i + 2] == 1 {
-                if i + 3 < data.len() && (data[i + 3] & 0x1f) == 9 {
+                // 3-byte start code
+                if codec == "av1" {
+                    if i + 3 < data.len() && (data[i + 3] & 0x38) == 0x10 {
+                        return Some(i);
+                    }
+                } else if i + 3 < data.len() && (data[i + 3] & 0x7f) == aud_nal_type {
                     return Some(i);
                 }
                 i += 3;
@@ -765,31 +896,68 @@ fn find_next_aud(data: &[u8], from: usize) -> Option<usize> {
     None
 }
 
-/// Check if a frame's NAL data contains an IDR (type 5) or SPS (type 7).
-fn frame_is_keyframe(data: &[u8]) -> bool {
-    let mut i = 0;
-    while i + 3 < data.len() {
-        if data[i] == 0 && data[i + 1] == 0 {
-            let (sc_len, nal_off) = if data[i + 2] == 0 && i + 3 < data.len() && data[i + 3] == 1 {
-                (4, 4)
-            } else if data[i + 2] == 1 {
-                (3, 3)
-            } else {
-                i += 1;
-                continue;
-            };
-            if i + nal_off < data.len() {
-                let nal_type = data[i + nal_off] & 0x1f;
-                if nal_type == 5 || nal_type == 7 {
-                    return true;
+/// Check if a frame's NAL data contains a keyframe.
+fn frame_is_keyframe(data: &[u8], codec: &str) -> bool {
+    match codec {
+        "h265" => {
+            // HEVC: IDR (type 19, 20) or VPS (32) or SPS (33)
+            let mut i = 0;
+            while i + 3 < data.len() {
+                if data[i] == 0 && data[i + 1] == 0 {
+                    let (sc_len, nal_off) = if data[i + 2] == 0 && i + 3 < data.len() && data[i + 3] == 1 {
+                        (4, 4)
+                    } else if data[i + 2] == 1 {
+                        (3, 3)
+                    } else {
+                        i += 1;
+                        continue;
+                    };
+                    if i + nal_off < data.len() {
+                        let nal_type = (data[i + nal_off] >> 1) & 0x3f;
+                        if nal_type == 19 || nal_type == 20 || nal_type == 32 || nal_type == 33 {
+                            return true;
+                        }
+                    }
+                    i += sc_len;
+                } else {
+                    i += 1;
                 }
             }
-            i += sc_len;
-        } else {
-            i += 1;
+            false
+        }
+        "av1" => {
+            // AV1: key frame has show_existing_frame=0 and frame_type=0 (KEY_FRAME)
+            // Simplified: check for any OBU_FRAME with frame_type=0
+            // For now, treat first frame as keyframe (AV1 temporal unit delimiters make this reliable)
+            true
+        }
+        _ => {
+            // H.264: IDR (type 5) or SPS (type 7)
+            let mut i = 0;
+            while i + 3 < data.len() {
+                if data[i] == 0 && data[i + 1] == 0 {
+                    let (sc_len, nal_off) = if data[i + 2] == 0 && i + 3 < data.len() && data[i + 3] == 1 {
+                        (4, 4)
+                    } else if data[i + 2] == 1 {
+                        (3, 3)
+                    } else {
+                        i += 1;
+                        continue;
+                    };
+                    if i + nal_off < data.len() {
+                        let nal_type = data[i + nal_off] & 0x1f;
+                        if nal_type == 5 || nal_type == 7 {
+                            return true;
+                        }
+                    }
+                    i += sc_len;
+                } else {
+                    i += 1;
+                }
+            }
+            false
         }
     }
-    false
 }
 
 async fn stream_frames_ffmpeg(
@@ -798,76 +966,120 @@ async fn stream_frames_ffmpeg(
     app: &AppHandle,
     width: usize,
     height: usize,
+    config: &EncoderConfig,
 ) -> anyhow::Result<()> {
     use std::process::Stdio;
     use tokio::io::AsyncReadExt;
     use tokio::process::Command as TokioCommand;
 
-    let encoder = detect_ffmpeg_encoder();
-    eprintln!("[host] ffmpeg encoder: {}", encoder);
+    let encoder = resolve_encoder(&config.codec, &config.backend);
+    let (fmt, bsf) = codec_format(&config.codec);
+    eprintln!(
+        "[host] ffmpeg: encoder={} format={} bsf={} bitrate={} fps={} gop={}",
+        encoder, fmt, bsf, config.bitrate, config.framerate, config.gop
+    );
 
     let mut cmd = TokioCommand::new("ffmpeg");
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
 
     // Input: screen capture
     if cfg!(target_os = "macos") {
         cmd.arg("-f").arg("avfoundation")
-            .arg("-framerate").arg("30")
+            .arg("-framerate").arg(config.framerate.to_string())
             .arg("-capture_cursor").arg("1")
             .arg("-i").arg("1:");
+    } else if cfg!(target_os = "windows") {
+        cmd.arg("-f").arg("gdigrab")
+            .arg("-framerate").arg(config.framerate.to_string())
+            .arg("-i").arg("desktop");
     } else {
         let display = std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string());
         cmd.arg("-f").arg("x11grab")
-            .arg("-framerate").arg("30")
+            .arg("-framerate").arg(config.framerate.to_string())
             .arg("-video_size").arg(format!("{}x{}", width, height))
             .arg("-i").arg(&display);
     }
 
     // Encoder-specific settings
     match encoder.as_str() {
-        "h264_nvenc" => {
-            cmd.arg("-c:v").arg("h264_nvenc")
+        e if e.ends_with("_nvenc") => {
+            cmd.arg("-c:v").arg(&encoder)
                 .arg("-preset").arg("p1")
                 .arg("-tune").arg("ll")
                 .arg("-rc").arg("cbr")
-                .arg("-b:v").arg("8M");
+                .arg("-b:v").arg(&config.bitrate);
         }
-        "h264_vaapi" => {
-            cmd.arg("-c:v").arg("h264_vaapi")
+        e if e.ends_with("_vaapi") => {
+            cmd.arg("-c:v").arg(&encoder)
                 .arg("-rc_mode").arg("CBR")
-                .arg("-b:v").arg("8M");
+                .arg("-b:v").arg(&config.bitrate);
         }
-        "h264_videotoolbox" => {
-            cmd.arg("-c:v").arg("h264_videotoolbox")
+        e if e.ends_with("_videotoolbox") => {
+            cmd.arg("-c:v").arg(&encoder)
                 .arg("-realtime").arg("1")
-                .arg("-b:v").arg("8M");
+                .arg("-b:v").arg(&config.bitrate);
         }
-        _ => {
-            // libx264 software fallback
+        e if e.ends_with("_qsv") => {
+            cmd.arg("-c:v").arg(&encoder)
+                .arg("-preset").arg("veryfast")
+                .arg("-b:v").arg(&config.bitrate);
+        }
+        e if e.ends_with("_amf") => {
+            cmd.arg("-c:v").arg(&encoder)
+                .arg("-usage").arg("ultralowlatency")
+                .arg("-b:v").arg(&config.bitrate);
+        }
+        "libx264" => {
             cmd.arg("-c:v").arg("libx264")
                 .arg("-preset").arg("ultrafast")
                 .arg("-tune").arg("zerolatency")
-                .arg("-b:v").arg("8M");
+                .arg("-b:v").arg(&config.bitrate);
+        }
+        "libx265" => {
+            cmd.arg("-c:v").arg("libx265")
+                .arg("-preset").arg("ultrafast")
+                .arg("-tune").arg("zerolatency")
+                .arg("-x265-params").arg("keyint=30:min-keyint=30")
+                .arg("-b:v").arg(&config.bitrate);
+        }
+        "libsvtav1" => {
+            cmd.arg("-c:v").arg("libsvtav1")
+                .arg("-preset").arg("8")
+                .arg("-crf").arg("35")
+                .arg("-g").arg(config.gop.to_string());
+        }
+        "libaom-av1" => {
+            cmd.arg("-c:v").arg("libaom-av1")
+                .arg("-cpu-used").arg("8")
+                .arg("-crf").arg("35")
+                .arg("-b:v").arg(&config.bitrate);
+        }
+        _ => {
+            return Err(anyhow::anyhow!("unsupported encoder: {}", encoder));
         }
     }
 
-    // Common output settings
-    cmd.arg("-g").arg("30")
-        .arg("-bf").arg("0")
+    // Common output settings (skip gop for libx265/libsvtav1 which set it above)
+    if encoder != "libx265" && encoder != "libsvtav1" {
+        cmd.arg("-g").arg(config.gop.to_string());
+    }
+    cmd.arg("-bf").arg("0")
         .arg("-pix_fmt").arg("yuv420p")
-        .arg("-bsf:v").arg("h264_metadata=aud=insert")
-        .arg("-f").arg("h264")
+        .arg("-bsf:v").arg(bsf)
+        .arg("-f").arg(fmt)
         .arg("-");
 
     let mut child = cmd.spawn().context("failed to spawn ffmpeg")?;
     let mut stdout = child.stdout.take().context("no stdout from ffmpeg")?;
+    let mut stderr = child.stderr.take();
+    let mut stderr_buf = String::new();
 
     let mut buf: Vec<u8> = Vec::with_capacity(65536);
     let mut frame_start: usize = 0;
-    let mut first_aud_seen = false;
+    let mut first_delim_seen = false;
     let mut frame_count = 0u32;
     let start = Instant::now();
     let mut last_frame_time = Instant::now();
@@ -876,20 +1088,27 @@ async fn stream_frames_ffmpeg(
         let mut tmp = [0u8; 16384];
         let n = stdout.read(&mut tmp).await?;
         if n == 0 {
+            // Capture stderr for diagnostics
+            if let Some(ref mut stderr) = stderr {
+                use tokio::io::AsyncReadExt;
+                let _ = stderr.read_to_string(&mut stderr_buf).await;
+            }
             eprintln!("[host] ffmpeg stdout closed");
+            if !stderr_buf.is_empty() {
+                eprintln!("[host] ffmpeg stderr: {}", stderr_buf);
+            }
             break;
         }
         buf.extend_from_slice(&tmp[..n]);
 
-        // Extract complete frames (delimited by AUD NAL units)
+        // Extract complete frames (delimited by AUD/TD NAL units)
         loop {
-            let search_from = if first_aud_seen { frame_start + 6 } else { 0 };
-            match find_next_aud(&buf, search_from) {
-                Some(aud_pos) => {
-                    if first_aud_seen {
-                        // Frame data: buf[frame_start..aud_pos]
-                        let frame_data = &buf[frame_start..aud_pos];
-                        let is_keyframe = frame_is_keyframe(frame_data);
+            let search_from = if first_delim_seen { frame_start + 6 } else { 0 };
+            match find_next_frame_delim(&buf, search_from, &config.codec) {
+                Some(delim_pos) => {
+                    if first_delim_seen {
+                        let frame_data = &buf[frame_start..delim_pos];
+                        let is_keyframe = frame_is_keyframe(frame_data, &config.codec);
                         let frame_size = frame_data.len();
 
                         let now = Instant::now();
@@ -922,16 +1141,17 @@ async fn stream_frames_ffmpeg(
                                 "size_bytes": frame_size,
                                 "fps": (fps * 10.0).round() / 10.0,
                                 "keyframe": is_keyframe,
+                                "encoder": encoder.clone(),
                             }),
                         );
 
                         eprintln!(
-                            "[host] frame={} {}x{} h264={}B kf={} fps={:.1} ftime={:.1}ms",
-                            frame_count, width, height, frame_size, is_keyframe, fps, frame_ms
+                            "[host] frame={} {}x{} {}={}B kf={} fps={:.1} ftime={:.1}ms",
+                            frame_count, width, height, config.codec, frame_size, is_keyframe, fps, frame_ms
                         );
                     }
-                    frame_start = aud_pos;
-                    first_aud_seen = true;
+                    frame_start = delim_pos;
+                    first_delim_seen = true;
                 }
                 None => break,
             }

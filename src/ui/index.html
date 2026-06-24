@@ -386,6 +386,28 @@
       font-size: 11px;
       color: var(--foreground);
     }
+    .config-select {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--foreground);
+      background: var(--background);
+      border: 1px solid var(--border);
+      padding: 2px 4px;
+      cursor: pointer;
+    }
+    .config-input {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--foreground);
+      background: var(--background);
+      border: 1px solid var(--border);
+      padding: 2px 4px;
+      width: 80px;
+    }
+    .config-input:focus {
+      outline: none;
+      border-color: var(--foreground);
+    }
   </style>
 </head>
 <body>
@@ -497,9 +519,41 @@
         <button class="link-btn" style="margin-top: 8px;" onclick="scanFido()">rescan</button>
       </div>
       <div class="panel-section">
-        <h3># codec</h3>
-        <div class="info-row"><span class="info-label">webcodecs</span><span class="info-value" id="codec-webcodecs">checking...</span></div>
-        <div class="info-row"><span class="info-label">decode path</span><span class="info-value" id="codec-path">—</span></div>
+        <h3># encoder</h3>
+        <div class="info-row">
+          <span class="info-label">codec</span>
+          <select id="enc-codec" class="config-select">
+            <option value="h264">h.264</option>
+            <option value="h265">h.265</option>
+            <option value="av1">av1</option>
+          </select>
+        </div>
+        <div class="info-row">
+          <span class="info-label">backend</span>
+          <select id="enc-backend" class="config-select">
+            <option value="auto">auto</option>
+            <option value="nvenc">nvenc</option>
+            <option value="vaapi">vaapi</option>
+            <option value="qsv">qsv</option>
+            <option value="amf">amf</option>
+            <option value="videotoolbox">videotoolbox</option>
+            <option value="software">software</option>
+          </select>
+        </div>
+        <div class="info-row">
+          <span class="info-label">bitrate</span>
+          <input id="enc-bitrate" class="config-input" type="text" value="8M" />
+        </div>
+        <div class="info-row">
+          <span class="info-label">framerate</span>
+          <input id="enc-framerate" class="config-input" type="number" value="30" min="1" max="60" />
+        </div>
+        <div class="info-row">
+          <span class="info-label">gop</span>
+          <input id="enc-gop" class="config-input" type="number" value="30" min="1" max="120" />
+        </div>
+        <div class="info-row"><span class="info-label">available</span><span class="info-value" id="enc-available">—</span></div>
+        <button class="link-btn" style="margin-top: 8px;" onclick="saveEncoderConfig()">apply</button>
       </div>
       <div class="panel-section">
         <h3># performance</h3>
@@ -871,9 +925,9 @@
     }
 
     listen('host-encode-stats', (event) => {
-      const { encode_ms, capture_ms, size_bytes, fps } = event.payload;
+      const { encode_ms, capture_ms, size_bytes, fps, encoder } = event.payload;
       document.getElementById('perf-encode').textContent = encode_ms.toFixed(1) + ' ms';
-      document.getElementById('perf-capture').textContent = capture_ms > 0 ? capture_ms.toFixed(1) + ' ms' : 'ffmpeg';
+      document.getElementById('perf-capture').textContent = encoder || (capture_ms > 0 ? capture_ms.toFixed(1) + ' ms' : 'ffmpeg');
       document.getElementById('perf-size').textContent = (size_bytes / 1024).toFixed(1) + ' KB';
       document.getElementById('perf-fps').textContent = fps.toFixed(1);
 
@@ -888,20 +942,42 @@
     let decoderConfigured = false;
 
     (async function detectWebCodecs() {
-      const el = document.getElementById('codec-webcodecs');
-      const pathEl = document.getElementById('codec-path');
       if (hasWebCodecs) {
-        el.textContent = 'available';
-        el.style.color = 'var(--green)';
-        pathEl.textContent = 'webcodecs (hw)';
         await invoke('set_webcodecs_available', { available: true });
       } else {
-        el.textContent = 'unavailable';
-        el.style.color = 'var(--destructive)';
-        pathEl.textContent = 'openh264 → jpeg';
         await invoke('set_webcodecs_available', { available: false });
       }
     })();
+
+    // ─── Encoder config ────────────────────────────────────────────────
+    (async function loadEncoderConfig() {
+      try {
+        const config = await invoke('get_encoder_config');
+        document.getElementById('enc-codec').value = config.codec;
+        document.getElementById('enc-backend').value = config.backend;
+        document.getElementById('enc-bitrate').value = config.bitrate;
+        document.getElementById('enc-framerate').value = config.framerate;
+        document.getElementById('enc-gop').value = config.gop;
+      } catch (e) { console.error('encoder config load failed:', e); }
+
+      try {
+        const available = await invoke('detect_available_encoders');
+        document.getElementById('enc-available').textContent = available.join(', ') || 'none';
+      } catch (e) {
+        document.getElementById('enc-available').textContent = 'ffmpeg not found';
+      }
+    })();
+
+    async function saveEncoderConfig() {
+      const config = {
+        codec: document.getElementById('enc-codec').value,
+        backend: document.getElementById('enc-backend').value,
+        bitrate: document.getElementById('enc-bitrate').value,
+        framerate: parseInt(document.getElementById('enc-framerate').value) || 30,
+        gop: parseInt(document.getElementById('enc-gop').value) || 30,
+      };
+      await invoke('set_encoder_config', { config });
+    }
 
     // ─── Annex B → AVCC conversion ─────────────────────────────────────
     // openh264 outputs Annex B (00 00 00 01 start codes).
