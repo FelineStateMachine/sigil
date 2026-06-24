@@ -465,10 +465,8 @@
 
   <!-- Bottom bar -->
   <div class="bottombar">
-    <span class="prompt">keyhome</span>
-    <span class="sep">»</span>
     <span class="action primary" id="action-main" onclick="mainAction()">host</span>
-    <span class="sep">·</span>
+    <span class="sep hidden" id="sep-disconnect-main">·</span>
     <span class="action danger hidden" id="action-disconnect" onclick="disconnect()">disconnect</span>
     <span class="sep hidden" id="sep-disconnect">·</span>
     <span class="action" id="action-unreg" onclick="unregister()">unregister</span>
@@ -658,7 +656,11 @@
           setStatus('ok', 'hosting');
           document.getElementById('node-id-text').textContent =
             result.node_id.substring(0, 16) + '...';
-          document.getElementById('action-main').textContent = 'stop';
+          // Show "stop hosting" disconnect button, hide main action
+          document.getElementById('action-disconnect').textContent = 'stop hosting';
+          document.getElementById('action-disconnect').classList.remove('hidden');
+          document.getElementById('sep-disconnect-main').classList.remove('hidden');
+          document.getElementById('action-main').style.display = 'none';
           document.getElementById('action-unreg').style.display = 'none';
           // Show host info panel, hide placeholder
           document.getElementById('placeholder').classList.add('hidden');
@@ -683,8 +685,11 @@
       } catch (e) { console.error(e); }
       hosting = false;
       setStatus('', 'idle');
+      document.getElementById('action-main').style.display = '';
       document.getElementById('action-main').textContent = registered ? 'host' : 'register';
       document.getElementById('action-unreg').style.display = registered ? '' : 'none';
+      document.getElementById('action-disconnect').classList.add('hidden');
+      document.getElementById('sep-disconnect-main').classList.add('hidden');
       document.getElementById('host-info').classList.add('hidden');
       document.getElementById('placeholder').classList.remove('hidden');
       document.getElementById('pin-label').classList.remove('hidden');
@@ -695,7 +700,8 @@
     // ─── Main action (host/stop/register) ───────────────────────────────
     async function mainAction() {
       if (hosting) {
-        await stopHost();
+        // Hosting state uses disconnect button, not main action
+        return;
       } else if (registered) {
         await startHost();
       } else {
@@ -722,8 +728,9 @@
           document.getElementById('frame-canvas').style.display = 'block';
           document.getElementById('placeholder').classList.add('hidden');
           document.getElementById('control-bar').classList.add('visible');
-          // Show disconnect, hide connect
+          // Show disconnect, hide connect + main action
           document.getElementById('action-connect').style.display = 'none';
+          document.getElementById('action-disconnect').textContent = 'disconnect';
           document.getElementById('action-disconnect').classList.remove('hidden');
           document.getElementById('sep-disconnect').classList.remove('hidden');
           document.getElementById('action-main').style.display = 'none';
@@ -736,6 +743,10 @@
     }
 
     async function disconnect() {
+      if (hosting) {
+        await stopHost();
+        return;
+      }
       try {
         await invoke('iroh_client_disconnect');
       } catch (e) { console.error(e); }
