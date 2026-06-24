@@ -2,7 +2,7 @@
 
 ## Spike
 
-`spikes/003-fido2-hid-enumeration`
+`docs/spikes/003-fido2-hid-enumeration`
 
 ## Date
 
@@ -31,7 +31,7 @@ ctap-hid-fido2 = "3.5"
 
 ### Spike code
 
-`spikes/003-fido2-hid-enumeration/src/main.rs` — enumerates FIDO HID devices, creates a `FidoKeyHid`, calls `get_info()` and `get_pin_retries()`.
+`docs/spikes/003-fido2-hid-enumeration/src/main.rs` — enumerates FIDO HID devices, creates a `FidoKeyHid`, calls `get_info()` and `get_pin_retries()`.
 
 ## Observed output
 

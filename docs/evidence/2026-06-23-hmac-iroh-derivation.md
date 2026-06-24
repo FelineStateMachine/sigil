@@ -2,7 +2,7 @@
 
 ## Spike
 
-`spikes/004-hmac-iroh-derivation`
+`docs/spikes/004-hmac-iroh-derivation`
 
 ## Date
 

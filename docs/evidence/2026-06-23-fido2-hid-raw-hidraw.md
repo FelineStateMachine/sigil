@@ -2,7 +2,7 @@
 
 ## Spike
 
-`spikes/003-fido2-hid-enumeration`
+`docs/spikes/003-fido2-hid-enumeration`
 
 ## Question
 

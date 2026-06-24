@@ -2,7 +2,7 @@
 
 ## Spike
 
-`spikes/001-iroh-native-ping`
+`docs/spikes/001-iroh-native-ping`
 
 ## Question
 
@@ -11,7 +11,7 @@ Can a native Rust process create Iroh endpoints, produce peer dial material, and
 ## Command
 
 ```bash
-cd /home/tank/repos/keyhome/spikes/001-iroh-native-ping
+cd /home/tank/repos/keyhome/docs/spikes/001-iroh-native-ping
 . "$HOME/.cargo/env"
 cargo run -- loopback
 ```

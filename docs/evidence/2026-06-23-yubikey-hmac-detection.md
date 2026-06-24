@@ -2,7 +2,7 @@
 
 ## Spike
 
-`spikes/002-yubikey-hmac-detection`
+`docs/spikes/002-yubikey-hmac-detection`
 
 ## Question
 
@@ -11,7 +11,7 @@ Can a native Rust process compile and run a non-destructive YubiKey HMAC-SHA1 de
 ## Command
 
 ```bash
-cd /home/tank/repos/keyhome/spikes/002-yubikey-hmac-detection
+cd /home/tank/repos/keyhome/docs/spikes/002-yubikey-hmac-detection
 . "$HOME/.cargo/env"
 cargo run
 ```
