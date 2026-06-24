@@ -731,8 +731,23 @@ impl ProtocolHandler for FrameStreamHandler {
         let count = self.connections.fetch_add(1, Ordering::SeqCst) + 1;
         let _ = self.app.emit("host-connections", count);
         eprintln!("[host] client connected: {} (total: {})", conn.remote_id(), count);
-        if let Err(e) = stream_frames(conn, &self.app).await {
-            eprintln!("[host] stream error: {}", e);
+        // Spawn stream_frames, race against connection close
+        let conn_clone = conn.clone();
+        let app_clone = self.app.clone();
+        let mut stream_task = tokio::spawn(async move {
+            stream_frames(conn_clone, &app_clone).await
+        });
+        // Wait for either stream to end or connection to close
+        tokio::select! {
+            result = &mut stream_task => {
+                if let Ok(Err(e)) = result {
+                    eprintln!("[host] stream error: {}", e);
+                }
+            }
+            _ = conn.closed() => {
+                eprintln!("[host] connection closed by peer");
+                stream_task.abort();
+            }
         }
         let count = self.connections.fetch_sub(1, Ordering::SeqCst) - 1;
         let _ = self.app.emit("host-connections", count);

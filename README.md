@@ -4,7 +4,9 @@ A native remote desktop app secured by FIDO2 hardware keys. Plug in a Google Tit
 
 ## Status
 
-Early prototype. Core functionality works (identity derivation, streaming, input). Performance optimization in progress. Current frame rate is ~1–2 fps. The main bottleneck is openh264 software encoding on the host and lack of hardware decode on the client when WebCodecs is unavailable.
+Early prototype. Core functionality works (identity derivation, streaming, input). Current frame rate is ~28 fps with ffmpeg+NVENC (was ~1–2 fps with xcap+openh264 software encoding). The bottleneck has moved from host-side encoding to network/relay throughput and client-side decode.
+
+Codec and encoder backend are configurable in the info panel — H.264, H.265, and AV1 are all supported, with backends for NVENC, VAAPI, QSV, AMF, VideoToolbox, and software. The frontend uses WebCodecs for hardware-accelerated decode of all three codecs.
 
 ## How it works
 
@@ -18,18 +20,20 @@ The connection is end-to-end encrypted by Iroh. The key never leaves the hardwar
 
 ## Architecture
 
-```text
+```
 +--------------------------- keyhome (Tauri v2) ---------------------------+
 |                                                                         |
 |  Frontend (vanilla JS, no npm)                                          |
 |  - connection state, video canvas, input capture                        |
+|  - WebCodecs decode (H.264/H.265/AV1, hardware-accelerated)             |
 |                                                                         |
 |  Tauri IPC                                                              |
 |                                                                         |
 |  Rust backend                                                           |
-|  - FIDO2 CTAP via ctap-hid-fido2       - Screen capture via xcap         |
-|  - Iroh Endpoint (P2P, relay, E2EE)    - H.264 encoding via openh264     |
-|  - OS keyring for identity             - Input injection via enigo      |
+|  - FIDO2 CTAP via ctap-hid-fido2       - Screen capture+encode: ffmpeg  |
+|  - Iroh Endpoint (P2P, relay, E2EE)      (NVENC/VAAPI/QSV/AMF/VT)       |
+|  - OS keyring for identity             - Fallback: xcap + openh264      |
+|  - Input injection via enigo           - Codec: H.264/H.265/AV1         |
 |                                                                         |
 +----------------------------------+--------------------------------------+
                                    |
@@ -37,7 +41,8 @@ The connection is end-to-end encrypted by Iroh. The key never leaves the hardwar
                                    v
 +------------------------------ Host -------------------------------------+
 |  - Iroh Endpoint (identity from keyring)                                |
-|  - xcap screen capture → openh264 H.264 encode                          |
+|  - ffmpeg screen capture → H.264/H.265/AV1 encode (hardware)            |
+|  - Fallback: xcap capture → openh264 software encode                    |
 |  - enigo mouse/keyboard injection                                       |
 +-------------------------------------------------------------------------+
 ```
@@ -48,8 +53,10 @@ The connection is end-to-end encrypted by Iroh. The key never leaves the hardwar
 | Backend | Rust |
 | P2P transport | Iroh (relay-assisted, end-to-end encrypted) |
 | Hardware auth | FIDO2 CTAP via `ctap-hid-fido2` |
-| Screen capture | `xcap` |
-| Video encoding | `openh264` (software) |
+| Screen capture + encoding | `ffmpeg` subprocess (NVENC/VAAPI/QSV/AMF/VideoToolbox) |
+| Fallback capture + encoding | `xcap` + `openh264` (software) |
+| Video codecs | H.264, H.265, AV1 (configurable) |
+| Client-side decode | WebCodecs (hardware-accelerated, all three codecs) |
 | Input injection | `enigo` |
 | Identity storage | OS keyring |
 | Frontend | Vanilla JS (no npm, no build step) |
