@@ -1,85 +1,112 @@
 # keyhome
 
-A native remote desktop app secured by FIDO2 hardware keys. Plug in a Google Titan or YubiKey, tap it, and connect to your home machine over an end-to-end encrypted Iroh tunnel. No passwords, no addresses shared — the key derives the Iroh identity.
+A native remote desktop app secured by FIDO2 hardware keys. Plug in a Google Titan or YubiKey, tap it, and connect to your machine over an end-to-end encrypted Iroh tunnel. No passwords, no addresses — the key derives the identity.
 
-## Status
+## What is it?
 
-Early prototype. Core functionality works (identity derivation, streaming, input). Current frame rate is ~28 fps with ffmpeg+NVENC (was ~1–2 fps with xcap+openh264 software encoding). The bottleneck has moved from host-side encoding to network/relay throughput and client-side decode.
+Keyhome is a Tauri v2 desktop app (Rust backend, vanilla JS frontend) that lets you remote into your machine using a FIDO2 security key as the sole authentication factor. The key produces a `hmac-secret` that becomes the 32-byte seed for an Iroh P2P endpoint. Both host and client derive the same identity from the same key — no address sharing, no passwords, no relay configuration.
 
-Codec and encoder backend are configurable in the info panel — H.264, H.265, and AV1 are all supported, with backends for NVENC, VAAPI, QSV, AMF, VideoToolbox, and software. The frontend uses WebCodecs for hardware-accelerated decode of all three codecs.
+Screen capture and encoding run through an ffmpeg subprocess with hardware acceleration (NVENC, VAAPI, QSV, AMF, VideoToolbox) up to 60fps. The client decodes via WebCodecs with hardware acceleration for H.264, H.265, and AV1. A software fallback (xcap + openh264) is available if ffmpeg isn't installed.
 
-## How it works
+## Why use it?
 
-You plug in a FIDO2 security key (Google Titan, YubiKey) and tap it. The key produces a `hmac-secret` that becomes the 32-byte seed for an Iroh `SecretKey`. Both the host and client derive the same Iroh node ID from the same key — no addresses are exchanged, no passwords are stored.
+- **No addresses to share.** The FIDO2 key derives the Iroh peer identity. Both sides get the same node ID from the same key.
+- **End-to-end encrypted.** Iroh handles the transport with built-in E2EE. The key never leaves the hardware token.
+- **Hardware-accelerated video.** ffmpeg handles capture + encode with your GPU. WebCodecs handles decode on the client. Up to 60fps.
+- **Cross-platform.** Linux, macOS, Windows. Auto-detects the best encoder for your hardware.
+- **No cloud, no account.** Peer-to-peer via Iroh relay. No third-party services.
+- **Single binary.** Tauri bundles everything except ffmpeg (system dependency).
 
-1. **One-time registration.** Tap the key → `hmac-secret` → 32 bytes → OS keyring.
-2. **Host starts.** Read from keyring → Iroh `SecretKey` → `Endpoint`.
-3. **Client connects.** Tap the key → derive the host's node ID → dial via relay.
+## Install
 
-The connection is end-to-end encrypted by Iroh. The key never leaves the hardware token; only the derived secret is persisted in the OS keyring.
+### Prerequisites
 
-## Architecture
+- **Rust 1.85+** — [install](https://rustup.rs)
+- **ffmpeg** — screen capture + hardware encoding
+- **FIDO2 security key** — Google Titan or YubiKey
 
-```
-+--------------------------- keyhome (Tauri v2) ---------------------------+
-|                                                                         |
-|  Frontend (vanilla JS, no npm)                                          |
-|  - connection state, video canvas, input capture                        |
-|  - WebCodecs decode (H.264/H.265/AV1, hardware-accelerated)             |
-|                                                                         |
-|  Tauri IPC                                                              |
-|                                                                         |
-|  Rust backend                                                           |
-|  - FIDO2 CTAP via ctap-hid-fido2       - Screen capture+encode: ffmpeg  |
-|  - Iroh Endpoint (P2P, relay, E2EE)      (NVENC/VAAPI/QSV/AMF/VT)       |
-|  - OS keyring for identity             - Fallback: xcap + openh264      |
-|  - Input injection via enigo           - Codec: H.264/H.265/AV1         |
-|                                                                         |
-+----------------------------------+--------------------------------------+
-                                   |
-                                   | Iroh (E2EE, relay-assisted)
-                                   v
-+------------------------------ Host -------------------------------------+
-|  - Iroh Endpoint (identity from keyring)                                |
-|  - ffmpeg screen capture → H.264/H.265/AV1 encode (hardware)            |
-|  - Fallback: xcap capture → openh264 software encode                    |
-|  - enigo mouse/keyboard injection                                       |
-+-------------------------------------------------------------------------+
+### Linux (Ubuntu/Debian)
+
+```bash
+sudo apt install -y ffmpeg libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+  libudev-dev libusb-1.0-0-dev pkg-config libwayland-dev libpipewire-0.3-dev libgbm-dev
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+git clone https://github.com/FelineStateMachine/keyhome.git
+cd keyhome
+cargo tauri dev
 ```
 
-| Layer | Crate / Tool |
+On NVIDIA, set `WEBKIT_DISABLE_DMABUF_RENDERER=1` before running.
+
+### macOS
+
+```bash
+brew install ffmpeg
+cargo install tauri-cli --version "^2"
+git clone https://github.com/FelineStateMachine/keyhome.git
+cd keyhome
+cargo tauri dev
+```
+
+Grant **Accessibility** and **Screen Recording** permissions in System Settings > Privacy & Security.
+
+### Windows
+
+```powershell
+choco install ffmpeg
+cargo install tauri-cli --version "^2"
+git clone https://github.com/FelineStateMachine/keyhome.git
+cd keyhome
+cargo tauri dev
+```
+
+### Prebuilt binaries
+
+Download from the [releases page](https://github.com/FelineStateMachine/keyhome/releases).
+
+### Usage
+
+1. **Register** (one-time per machine) — click register, tap your key. Creates a resident credential.
+2. **Host** — click host. The app starts listening on an Iroh endpoint derived from your key.
+3. **Connect** — on another machine, click connect, tap the same key. The screen appears, input is forwarded.
+
+Keyboard shortcuts: type your PIN, then press `c` (connect), `r` (register), or `h` (host).
+
+Full setup details: [docs/SETUP.md](docs/SETUP.md)
+
+## Docs
+
+| Document | Description |
+|---|---|
+| [Setup Guide](docs/SETUP.md) | Platform-specific install, dependencies, usage, architecture, protocol |
+| [Architecture](docs/SETUP.md#architecture) | Transport, encoder backends, wire protocol, connection tracking |
+| [Spikes](docs/SETUP.md#spikes-evidence) | Seven viability spikes with pass/fail evidence |
+| [Agent Guide](AGENTS.md) | Development context for AI agents working on the codebase |
+| [FIDO2 HID Evidence](docs/evidence/2026-06-23-ctap-hid-fido2-titan-communication.md) | ctap-hid-fido2 communication with Google Titan |
+| [HMAC → Iroh Derivation](docs/evidence/2026-06-23-hmac-iroh-derivation.md) | Titan hmac-secret → Iroh SecretKey proof |
+| [Iroh Native Ping](docs/evidence/2026-06-23-iroh-native-ping.md) | Iroh connectivity between native endpoints |
+| [YubiKey HMAC Detection](docs/evidence/2026-06-23-yubikey-hmac-detection.md) | YubiKey HMAC-secret detection |
+| [FIDO2 HID vs hidraw](docs/evidence/2026-06-23-fido2-hid-raw-hidraw.md) | HID vs hidraw approach comparison |
+
+## Tech stack
+
+| Layer | Technology |
 |---|---|
 | App shell | Tauri v2 |
-| Backend | Rust |
-| P2P transport | Iroh (relay-assisted, end-to-end encrypted) |
+| Backend | Rust (edition 2024) |
+| P2P transport | Iroh 1.0 (relay-assisted, E2EE) |
 | Hardware auth | FIDO2 CTAP via `ctap-hid-fido2` |
-| Screen capture + encoding | `ffmpeg` subprocess (NVENC/VAAPI/QSV/AMF/VideoToolbox) |
-| Fallback capture + encoding | `xcap` + `openh264` (software) |
-| Video codecs | H.264, H.265, AV1 (configurable) |
-| Client-side decode | WebCodecs (hardware-accelerated, all three codecs) |
+| Capture + encode | ffmpeg subprocess (NVENC/VAAPI/QSV/AMF/VideoToolbox) |
+| Fallback capture | `xcap` + `openh264` (software) |
+| Codecs | H.264, H.265, AV1 (configurable) |
+| Client decode | WebCodecs (hardware-accelerated, all three codecs) |
 | Input injection | `enigo` |
 | Identity storage | OS keyring |
 | Frontend | Vanilla JS (no npm, no build step) |
-
-## Spikes
-
-Seven spikes were completed as viability evidence. They live in `spikes/`.
-
-| # | Spike | What it proved |
-|---|---|---|
-| 1 | `001-iroh-native-ping` | Iroh connectivity between two native endpoints |
-| 2 | `002-yubikey-hmac-detection` | YubiKey HMAC-Secret detection and invocation |
-| 3 | `003-fido2-hid-enumeration` | FIDO2 HID device enumeration via `ctap-hid-fido2` |
-| 4 | `004-hmac-iroh-derivation` | HMAC-Secret → Iroh `SecretKey` derivation |
-| 5 | `005-frame-stream` | Frame streaming over Iroh |
-| 6 | `006-input-injection` | Mouse/keyboard injection via `enigo` |
-| 7 | `007-titan-no-copy` | Titan key derives identity without copying secrets off-device |
-
-## Requirements
-
-- **OS:** Linux, macOS, or Windows
-- **Hardware:** A FIDO2 security key (Google Titan, YubiKey)
-- **System dependencies:** See [docs/SETUP.md](docs/SETUP.md)
 
 ## License
 
