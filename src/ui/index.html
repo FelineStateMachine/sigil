@@ -420,6 +420,30 @@
       outline: none;
       border-color: var(--foreground);
     }
+
+    /* ─── Config overlay (pre-host) ───────────────────────────────────── */
+    .config-rows { text-align: left; margin-bottom: 8px; }
+    .config-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .config-row:last-child { border-bottom: none; }
+    .config-row-label {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted-fg);
+    }
+    .config-row-value {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--foreground);
+      max-width: 170px;
+      text-align: right;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body>
@@ -463,6 +487,57 @@
         </div>
         <div class="overlay-status" id="intro-status-reg"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- Config screen (post-registration, pre-host) -->
+  <div class="overlay-screen hidden" id="config-overlay">
+    <div class="overlay-content" style="width: 360px;">
+      <h1>configure host</h1>
+      <p>encoder settings before hosting.</p>
+      <div class="config-rows">
+        <div class="config-row">
+          <span class="config-row-label">codec</span>
+          <select id="cfg-codec" class="config-select">
+            <option value="h264">h.264</option>
+            <option value="h265">h.265</option>
+            <option value="av1">av1</option>
+          </select>
+        </div>
+        <div class="config-row">
+          <span class="config-row-label">backend</span>
+          <select id="cfg-backend" class="config-select">
+            <option value="auto">auto</option>
+            <option value="nvenc">nvenc</option>
+            <option value="vaapi">vaapi</option>
+            <option value="qsv">qsv</option>
+            <option value="amf">amf</option>
+            <option value="videotoolbox">videotoolbox</option>
+            <option value="software">software</option>
+          </select>
+        </div>
+        <div class="config-row">
+          <span class="config-row-label">bitrate</span>
+          <input id="cfg-bitrate" class="config-input" type="text" value="8M" />
+        </div>
+        <div class="config-row">
+          <span class="config-row-label">framerate</span>
+          <input id="cfg-framerate" class="config-input" type="number" value="30" min="1" max="60" />
+        </div>
+        <div class="config-row">
+          <span class="config-row-label">gop</span>
+          <input id="cfg-gop" class="config-input" type="number" value="30" min="1" max="120" />
+        </div>
+        <div class="config-row">
+          <span class="config-row-label">available</span>
+          <span class="config-row-value" id="cfg-available">—</span>
+        </div>
+      </div>
+      <div style="display: flex; gap: 16px; justify-content: center; margin-top: 20px;">
+        <button class="overlay-btn" onclick="configBack()">back</button>
+        <button class="overlay-btn" onclick="configHost()">host</button>
+      </div>
+      <div class="overlay-status" id="config-status"></div>
     </div>
   </div>
 
@@ -703,8 +778,14 @@
             result.node_id.substring(0, 16) + '...';
           document.getElementById('action-main').textContent = 'host';
           document.getElementById('action-unreg').style.display = '';
-          // Show intro again with registered state
-          await checkRegistration();
+          // Set up registered intro state (so "back" from config works)
+          document.getElementById('intro-unregistered').style.display = 'none';
+          document.getElementById('intro-registered').style.display = 'block';
+          document.getElementById('reg-status').textContent = 'registered';
+          document.getElementById('reg-node-id').textContent =
+            result.node_id.substring(0, 24) + '...';
+          // Show config screen before hosting
+          showConfigScreen();
         } else {
           hideTap();
           showIntro();
@@ -761,7 +842,58 @@
 
     async function introHost() {
       hideIntro();
-      await startHost();
+      showConfigScreen();
+    }
+
+    // ─── Config screen (pre-host) ──────────────────────────────────────
+    async function showConfigScreen() {
+      // Load current encoder config into the config overlay
+      try {
+        const config = await invoke('get_encoder_config');
+        document.getElementById('cfg-codec').value = config.codec;
+        document.getElementById('cfg-backend').value = config.backend;
+        document.getElementById('cfg-bitrate').value = config.bitrate;
+        document.getElementById('cfg-framerate').value = config.framerate;
+        document.getElementById('cfg-gop').value = config.gop;
+      } catch (e) { console.error('config load failed:', e); }
+      try {
+        const available = await invoke('detect_available_encoders');
+        document.getElementById('cfg-available').textContent = available.join(', ') || 'none';
+      } catch (e) {
+        document.getElementById('cfg-available').textContent = 'ffmpeg not found';
+      }
+      document.getElementById('config-status').textContent = '';
+      document.getElementById('config-overlay').classList.remove('hidden');
+    }
+
+    function hideConfigScreen() {
+      document.getElementById('config-overlay').classList.add('hidden');
+    }
+
+    function configBack() {
+      hideConfigScreen();
+      showIntro();
+    }
+
+    async function configHost() {
+      const status = document.getElementById('config-status');
+      status.className = 'overlay-status pending';
+      status.textContent = 'saving...';
+      try {
+        const config = {
+          codec: document.getElementById('cfg-codec').value,
+          backend: document.getElementById('cfg-backend').value,
+          bitrate: document.getElementById('cfg-bitrate').value,
+          framerate: parseInt(document.getElementById('cfg-framerate').value) || 30,
+          gop: parseInt(document.getElementById('cfg-gop').value) || 30,
+        };
+        await invoke('set_encoder_config', { config });
+        hideConfigScreen();
+        await startHost();
+      } catch (e) {
+        status.className = 'overlay-status err';
+        status.textContent = 'error: ' + e;
+      }
     }
 
     // ─── Host ───────────────────────────────────────────────────────────
@@ -823,7 +955,7 @@
         // Hosting state uses disconnect button, not main action
         return;
       } else if (registered) {
-        await startHost();
+        showConfigScreen();
       } else {
         // Not registered — show intro for registration
         showIntro();
