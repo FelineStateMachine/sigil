@@ -25,19 +25,12 @@ Screen capture and encoding run through an ffmpeg subprocess with hardware accel
 - **ffmpeg** for screen capture and hardware encoding
 - **FIDO2 security key** with hmac-secret support (YubiKey, Google Titan, etc.)
 
-### Linux (Ubuntu/Debian)
+### Linux (Ubuntu/Debian) — system deps
 
 ```bash
 sudo apt install -y ffmpeg libwebkit2gtk-4.1-dev build-essential curl wget file \
   libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
   libudev-dev libusb-1.0-0-dev pkg-config libwayland-dev libpipewire-0.3-dev libgbm-dev
-
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-
-git clone https://github.com/FelineStateMachine/sigil.git
-cd sigil
-cargo tauri dev
 ```
 
 On NVIDIA, set `WEBKIT_DISABLE_DMABUF_RENDERER=1` before running.
@@ -46,10 +39,6 @@ On NVIDIA, set `WEBKIT_DISABLE_DMABUF_RENDERER=1` before running.
 
 ```bash
 brew install ffmpeg
-cargo install tauri-cli --version "^2"
-git clone https://github.com/FelineStateMachine/sigil.git
-cd sigil
-cargo tauri dev
 ```
 
 Grant **Accessibility** and **Screen Recording** permissions in System Settings > Privacy & Security.
@@ -58,15 +47,13 @@ Grant **Accessibility** and **Screen Recording** permissions in System Settings 
 
 ```powershell
 choco install ffmpeg
-cargo install tauri-cli --version "^2"
-git clone https://github.com/FelineStateMachine/sigil.git
-cd sigil
-cargo tauri dev
 ```
 
-### Prebuilt binaries
+### Install
 
-Download from the [releases page](https://github.com/FelineStateMachine/sigil/releases).
+```bash
+cargo install --git https://args.io/cat/sigil
+```
 
 ### Usage
 
